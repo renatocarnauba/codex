@@ -296,7 +296,18 @@ async fn read_turn_idempotency_from_rollout(
     originator: &str,
     key: &str,
 ) -> io::Result<Option<DurableTurnIdempotencyMatch>> {
-    let meta_line = read_session_meta_line(path.as_path()).await?;
+    let meta_line = match read_session_meta_line(path.as_path()).await {
+        Ok(meta_line) => meta_line,
+        Err(err) => {
+            // A legacy or truncated rollout cannot own the key being resolved;
+            // failing the whole scan would block every new turn/start.
+            tracing::warn!(
+                "skipping rollout without readable session meta at {}: {err}",
+                path.display()
+            );
+            return Ok(None);
+        }
+    };
     if meta_line.meta.originator != originator {
         return Ok(None);
     }
