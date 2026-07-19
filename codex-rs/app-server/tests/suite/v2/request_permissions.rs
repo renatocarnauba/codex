@@ -58,6 +58,7 @@ async fn request_permissions_round_trip() -> Result<()> {
 
     let turn_start_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {

@@ -94,6 +94,12 @@ pub struct ThreadStartParams {
     pub config: Option<HashMap<String, JsonValue>>,
     #[ts(optional = nullable)]
     pub service_name: Option<String>,
+    /// Durable idempotency key for creating a thread. The key is scoped by the effective thread
+    /// originator. Repeating `thread/start` with the same tuple returns and resumes the original
+    /// active thread instead of creating another thread, including after app-server restart.
+    #[experimental("thread/start.idempotencyKey")]
+    #[ts(optional = nullable)]
+    pub idempotency_key: Option<String>,
     #[ts(optional = nullable)]
     pub base_instructions: Option<String>,
     #[ts(optional = nullable)]
@@ -566,6 +572,16 @@ pub struct ThreadForkParams {
     pub permissions: Option<String>,
     #[ts(optional = nullable)]
     pub config: Option<HashMap<String, serde_json::Value>>,
+    /// Optional metrics service identity. Recognized official services determine the effective
+    /// originator; otherwise the initialized connection identity remains authoritative.
+    #[ts(optional = nullable)]
+    pub service_name: Option<String>,
+    /// Durable idempotency key for creating this fork. The key is global within the effective
+    /// originator namespace and is bound to the source thread, boundary, cwd, threadSource, and
+    /// serviceName. Retries return the original fork, including after restart or archive.
+    #[experimental("thread/fork.idempotencyKey")]
+    #[ts(optional = nullable)]
+    pub idempotency_key: Option<String>,
     #[ts(optional = nullable)]
     pub base_instructions: Option<String>,
     #[ts(optional = nullable)]

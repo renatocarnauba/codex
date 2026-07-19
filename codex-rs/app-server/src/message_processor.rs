@@ -437,6 +437,7 @@ impl MessageProcessor {
             arg0_paths.clone(),
             Arc::clone(&config),
             config_manager.clone(),
+            Arc::clone(&thread_store),
             pending_thread_unloads,
             thread_state_manager,
             thread_watch_manager,
@@ -1157,6 +1158,11 @@ impl MessageProcessor {
             }
             ClientRequest::ThreadLoadedList { params, .. } => {
                 self.thread_processor.thread_loaded_list(params).await
+            }
+            ClientRequest::ServerConnectionList { params: _, .. } => {
+                self.thread_processor
+                    .server_connection_list(connection_id)
+                    .await
             }
             ClientRequest::ThreadRead { params, .. } => {
                 self.thread_processor.thread_read(params).await

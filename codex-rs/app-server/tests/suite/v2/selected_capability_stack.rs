@@ -358,6 +358,7 @@ async fn selected_capabilities_become_available_between_samples_in_one_turn() ->
     .await?;
     let turn_start_id = app_server
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id,
             input: vec![UserInput::Text {
                 text: "Use the executor when it becomes ready.".to_string(),
@@ -668,6 +669,7 @@ async fn run_turn(
 ) -> Result<()> {
     let request_id = app_server
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread_id.to_string(),
             input: vec![UserInput::Text {
                 text: text.to_string(),

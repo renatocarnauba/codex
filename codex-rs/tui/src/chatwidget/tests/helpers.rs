@@ -552,6 +552,7 @@ pub(super) fn handle_agent_reasoning_final(chat: &mut ChatWidget) {
 pub(super) fn handle_entered_review_mode(chat: &mut ChatWidget, review: impl Into<String>) {
     chat.handle_server_notification(
         ServerNotification::ItemStarted(ItemStartedNotification {
+            client_name: None,
             thread_id: thread_id(chat),
             turn_id: chat
                 .turn_lifecycle
@@ -643,6 +644,7 @@ pub(super) fn handle_patch_apply_begin(
 ) {
     chat.handle_server_notification(
         ServerNotification::ItemStarted(ItemStartedNotification {
+            client_name: None,
             thread_id: thread_id(chat),
             turn_id: turn_id.into(),
             started_at_ms: 0,
@@ -776,6 +778,7 @@ pub(super) fn replay_agent_message(
 pub(super) fn replay_turn_started(chat: &mut ChatWidget, replay_kind: ReplayKind) {
     chat.handle_server_notification(
         ServerNotification::TurnStarted(TurnStartedNotification {
+            client_name: None,
             thread_id: thread_id(chat),
             turn: app_server_turn(
                 "turn-1",
@@ -862,6 +865,7 @@ pub(super) fn begin_unified_exec_startup(
 pub(super) fn handle_exec_begin(chat: &mut ChatWidget, item: AppServerThreadItem) {
     chat.handle_server_notification(
         ServerNotification::ItemStarted(ItemStartedNotification {
+            client_name: None,
             thread_id: thread_id(chat),
             turn_id: chat
                 .turn_lifecycle
@@ -984,6 +988,7 @@ pub(super) fn app_server_turn(
 pub(super) fn handle_turn_started(chat: &mut ChatWidget, turn_id: &str) {
     chat.handle_server_notification(
         ServerNotification::TurnStarted(TurnStartedNotification {
+            client_name: None,
             thread_id: chat.thread_id.map(|id| id.to_string()).unwrap_or_default(),
             turn: app_server_turn(
                 turn_id,

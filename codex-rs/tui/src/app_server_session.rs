@@ -857,6 +857,7 @@ impl AppServerSession {
             .request_typed(ClientRequest::TurnStart {
                 request_id,
                 params: TurnStartParams {
+                    idempotency_key: None,
                     thread_id: thread_id.to_string(),
                     client_user_message_id: None,
                     input: items,
@@ -920,6 +921,7 @@ impl AppServerSession {
             .request_typed(ClientRequest::TurnSteer {
                 request_id,
                 params: TurnSteerParams {
+                    idempotency_key: None,
                     thread_id: thread_id.to_string(),
                     client_user_message_id: None,
                     input: items,

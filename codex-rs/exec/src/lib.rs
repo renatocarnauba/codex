@@ -895,6 +895,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                 ClientRequest::TurnStart {
                     request_id: request_ids.next(),
                     params: TurnStartParams {
+                        idempotency_key: None,
                         thread_id: primary_thread_id_for_span.clone(),
                         client_user_message_id: None,
                         input: items.into_iter().map(Into::into).collect(),
@@ -942,6 +943,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
             .map_err(anyhow::Error::msg)?;
             let _ = event_processor.process_server_notification(ServerNotification::TurnStarted(
                 TurnStartedNotification {
+                    client_name: None,
                     thread_id: response.review_thread_id.clone(),
                     turn: response.turn.clone(),
                 },

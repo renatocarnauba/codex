@@ -314,6 +314,7 @@ startup_timeout_sec = 10
     .await;
     let request_id = app_server
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: selected_thread.clone(),
             input: vec![UserInput::Text {
                 text: "Call the executor MCP echo tool".to_string(),

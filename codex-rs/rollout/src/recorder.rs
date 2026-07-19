@@ -67,6 +67,7 @@ use codex_protocol::protocol::SessionContextWindow;
 use codex_protocol::protocol::SessionMeta;
 use codex_protocol::protocol::SessionMetaLine;
 use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::ThreadCreationIdempotency;
 use codex_protocol::protocol::ThreadHistoryMode;
 use codex_protocol::protocol::ThreadSource;
 use codex_state::StateRuntime;
@@ -98,6 +99,7 @@ pub enum RolloutRecorderParams {
         source: Box<SessionSource>,
         thread_source: Option<ThreadSource>,
         originator: String,
+        thread_creation_idempotency: Option<ThreadCreationIdempotency>,
         base_instructions: BaseInstructions,
         dynamic_tools: Vec<DynamicToolSpec>,
         selected_capability_roots: Vec<SelectedCapabilityRoot>,
@@ -192,6 +194,7 @@ impl RolloutRecorderParams {
             source: Box::new(source),
             thread_source,
             originator,
+            thread_creation_idempotency: None,
             base_instructions,
             dynamic_tools,
             selected_capability_roots: Vec::new(),
@@ -205,6 +208,20 @@ impl RolloutRecorderParams {
     pub fn with_session_id(mut self, session_id: SessionId) -> Self {
         if let Self::Create { session_id: id, .. } = &mut self {
             *id = session_id;
+        }
+        self
+    }
+
+    pub fn with_thread_creation_idempotency(
+        mut self,
+        thread_creation_idempotency: Option<ThreadCreationIdempotency>,
+    ) -> Self {
+        if let Self::Create {
+            thread_creation_idempotency: value,
+            ..
+        } = &mut self
+        {
+            *value = thread_creation_idempotency;
         }
         self
     }
@@ -785,6 +802,7 @@ impl RolloutRecorder {
                 source,
                 thread_source,
                 originator,
+                thread_creation_idempotency,
                 base_instructions,
                 dynamic_tools,
                 selected_capability_roots,
@@ -815,6 +833,7 @@ impl RolloutRecorder {
                     timestamp,
                     cwd: cwd.clone(),
                     originator,
+                    thread_creation_idempotency: thread_creation_idempotency.map(Box::new),
                     cli_version: env!("CARGO_PKG_VERSION").to_string(),
                     agent_nickname: source.get_nickname(),
                     agent_role: source.get_agent_role(),

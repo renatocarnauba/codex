@@ -50,6 +50,7 @@ async fn thread_status_changed_emits_runtime_updates() -> Result<()> {
 
     let turn_start_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -179,6 +180,7 @@ async fn thread_status_changed_can_be_opted_out() -> Result<()> {
 
     let turn_start_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             client_user_message_id: None,
             input: vec![V2UserInput::Text {

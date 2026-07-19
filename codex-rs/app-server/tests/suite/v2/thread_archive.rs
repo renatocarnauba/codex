@@ -95,6 +95,7 @@ async fn thread_archive_requires_materialized_rollout() -> Result<()> {
     // Materialize rollout via a real user turn and confirm archive succeeds.
     let turn_start_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![UserInput::Text {
@@ -535,6 +536,7 @@ async fn thread_archive_clears_stale_subscriptions_before_resume() -> Result<()>
 
     let turn_start_id = primary
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![UserInput::Text {
@@ -616,6 +618,7 @@ async fn thread_archive_clears_stale_subscriptions_before_resume() -> Result<()>
 
     let resumed_turn_id = secondary
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             client_user_message_id: None,
             input: vec![UserInput::Text {

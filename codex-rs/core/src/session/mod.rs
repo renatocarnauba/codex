@@ -774,6 +774,24 @@ impl SessionIo {
         Ok(id)
     }
 
+    /// Submit user input using a caller-reserved durable turn id.
+    pub(crate) async fn submit_user_input_with_id(
+        &self,
+        id: String,
+        op: Op,
+        trace: Option<W3cTraceContext>,
+        client_user_message_id: Option<String>,
+    ) -> CodexResult<()> {
+        debug_assert!(matches!(op, Op::UserInput { .. }));
+        self.submit_with_id(Submission {
+            id,
+            op,
+            client_user_message_id,
+            trace,
+        })
+        .await
+    }
+
     /// Use sparingly: prefer `submit()` so submission IDs are generated consistently.
     pub(crate) async fn submit_with_id(&self, mut sub: Submission) -> CodexResult<()> {
         if sub.trace.is_none() {

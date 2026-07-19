@@ -1291,6 +1291,7 @@ async fn collab_receiver_notification_caches_thread_without_app_server_read() {
 
     app.handle_thread_event_now(ThreadBufferedEvent::Notification(
         ServerNotification::ItemStarted(ItemStartedNotification {
+            client_name: None,
             thread_id: ThreadId::new().to_string(),
             turn_id: "turn-1".to_string(),
             started_at_ms: 0,
@@ -2962,6 +2963,7 @@ async fn inactive_thread_file_change_approval_recovers_buffered_changes() {
     app.enqueue_thread_notification(
         thread_id,
         ServerNotification::ItemStarted(ItemStartedNotification {
+            client_name: None,
             thread_id: thread_id.to_string(),
             turn_id: "turn-approval".to_string(),
             started_at_ms: 0,
@@ -5129,6 +5131,7 @@ fn test_turn(turn_id: &str, status: TurnStatus, items: Vec<ThreadItem>) -> Turn 
 
 fn turn_started_notification(thread_id: ThreadId, turn_id: &str) -> ServerNotification {
     ServerNotification::TurnStarted(TurnStartedNotification {
+        client_name: None,
         thread_id: thread_id.to_string(),
         turn: Turn {
             started_at: Some(0),
@@ -6466,6 +6469,7 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
             events: vec![ThreadBufferedEvent::Notification(
                 ServerNotification::ItemStarted(
                     codex_app_server_protocol::ItemStartedNotification {
+                        client_name: None,
                         thread_id: "thread-1".to_string(),
                         turn_id: "turn-1".to_string(),
                         started_at_ms: 0,

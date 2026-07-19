@@ -479,6 +479,7 @@ use codex_thread_store::SearchThreadsParams as StoreSearchThreadsParams;
 use codex_thread_store::SortDirection as StoreSortDirection;
 use codex_thread_store::StoredThread;
 use codex_thread_store::StoredTurn;
+use codex_thread_store::StoredTurnIdempotency;
 use codex_thread_store::StoredTurnItemsView;
 use codex_thread_store::StoredTurnStatus;
 use codex_thread_store::ThreadMetadataPatch as StoreThreadMetadataPatch;

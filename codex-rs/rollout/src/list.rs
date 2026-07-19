@@ -225,6 +225,316 @@ trait RolloutFileVisitor {
     ) -> impl std::future::Future<Output = ControlFlow<()>> + Send;
 }
 
+struct CreationIdempotencyKeyVisitor<'a> {
+    originator: &'a str,
+    key: &'a str,
+    matches: Vec<(ThreadId, PathBuf)>,
+}
+
+impl RolloutFileVisitor for CreationIdempotencyKeyVisitor<'_> {
+    async fn visit(
+        &mut self,
+        _ts: OffsetDateTime,
+        _id: Uuid,
+        path: PathBuf,
+        _scanned: usize,
+    ) -> ControlFlow<()> {
+        let Ok(meta_line) = read_session_meta_line(path.as_path()).await else {
+            return ControlFlow::Continue(());
+        };
+        if meta_line.meta.originator == self.originator
+            && meta_line
+                .meta
+                .thread_creation_idempotency
+                .as_ref()
+                .is_some_and(|value| value.key == self.key)
+            && !self
+                .matches
+                .iter()
+                .any(|(thread_id, _)| *thread_id == meta_line.meta.id)
+        {
+            self.matches.push((meta_line.meta.id, path));
+            if self.matches.len() > 1 {
+                return ControlFlow::Break(());
+            }
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+/// Finds a thread by the durable `(originator, creation idempotency key)` tuple.
+///
+/// Unlike normal thread listing, this includes active and archived threads, including threads
+/// that do not yet have a user-message preview. That is the critical crash-recovery window
+/// between durable thread creation and the client receiving/binding the creation response.
+pub async fn find_thread_by_creation_idempotency_key(
+    codex_home: &Path,
+    originator: &str,
+    key: &str,
+) -> io::Result<Option<(ThreadId, PathBuf)>> {
+    let mut visitor = CreationIdempotencyKeyVisitor {
+        originator,
+        key,
+        matches: Vec::new(),
+    };
+    let mut scanned_files = 0usize;
+    let sessions_root = codex_home.join(SESSIONS_SUBDIR);
+    if sessions_root.exists() {
+        walk_rollout_files_unbounded(sessions_root.as_path(), &mut scanned_files, &mut visitor)
+            .await?;
+    }
+    let archived_root = codex_home.join(ARCHIVED_SESSIONS_SUBDIR);
+    if archived_root.exists() {
+        walk_flat_rollout_files_unbounded(
+            archived_root.as_path(),
+            &mut scanned_files,
+            &mut visitor,
+        )
+        .await?;
+    }
+    match visitor.matches.as_slice() {
+        [] => Ok(None),
+        [single] => Ok(Some(single.clone())),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("multiple threads share creation idempotency key for originator {originator}"),
+        )),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DurableTurnIdempotencyStatus {
+    Reserved,
+    InProgress,
+    Completed,
+    Interrupted,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DurableTurnIdempotencyMatch {
+    pub thread_id: ThreadId,
+    pub turn_id: String,
+    pub request_fingerprint: String,
+    pub status: DurableTurnIdempotencyStatus,
+    pub started_at: Option<i64>,
+    pub completed_at: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub path: PathBuf,
+}
+
+struct TurnIdempotencyKeyVisitor<'a> {
+    action: codex_protocol::protocol::TurnIdempotencyAction,
+    originator: &'a str,
+    key: &'a str,
+    matches: Vec<DurableTurnIdempotencyMatch>,
+    error: Option<io::Error>,
+}
+
+impl RolloutFileVisitor for TurnIdempotencyKeyVisitor<'_> {
+    async fn visit(
+        &mut self,
+        _ts: OffsetDateTime,
+        _id: Uuid,
+        path: PathBuf,
+        _scanned: usize,
+    ) -> ControlFlow<()> {
+        match read_turn_idempotency_from_rollout(
+            path.clone(),
+            self.action,
+            self.originator,
+            self.key,
+        )
+        .await
+        {
+            Ok(Some(found)) => {
+                if !self.matches.iter().any(|existing| {
+                    existing.thread_id == found.thread_id && existing.turn_id == found.turn_id
+                }) {
+                    self.matches.push(found);
+                }
+                if self.matches.len() > 1 {
+                    return ControlFlow::Break(());
+                }
+            }
+            Ok(None) => {}
+            Err(err) => {
+                self.error = Some(err);
+                return ControlFlow::Break(());
+            }
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+async fn read_turn_idempotency_from_rollout(
+    path: PathBuf,
+    action: codex_protocol::protocol::TurnIdempotencyAction,
+    originator: &str,
+    key: &str,
+) -> io::Result<Option<DurableTurnIdempotencyMatch>> {
+    let meta_line = read_session_meta_line(path.as_path()).await?;
+    if meta_line.meta.originator != originator {
+        return Ok(None);
+    }
+
+    let mut binding = None;
+    let mut started = None;
+    let mut completed = None;
+    let mut aborted = None;
+    let mut lines = compression::open_rollout_line_reader(path.as_path()).await?;
+    while let Some(line) = lines.next_line().await? {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(rollout_line) = serde_json::from_str::<RolloutLine>(trimmed) else {
+            continue;
+        };
+        if let RolloutItem::EventMsg(event) = rollout_line.item {
+            match event {
+                EventMsg::TurnIdempotency(event)
+                    if event.action == action
+                        && event.originator == originator
+                        && event.key == key =>
+                {
+                    if event.cancelled {
+                        binding = None;
+                        started = None;
+                        completed = None;
+                        aborted = None;
+                        continue;
+                    }
+                    if binding.as_ref().is_some_and(
+                        |existing: &codex_protocol::protocol::TurnIdempotencyEvent| {
+                            existing.turn_id != event.turn_id
+                                || existing.request_fingerprint != event.request_fingerprint
+                        },
+                    ) {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "multiple turns share idempotency key in thread {}",
+                                meta_line.meta.id
+                            ),
+                        ));
+                    }
+                    binding = Some(event);
+                }
+                EventMsg::TurnStarted(event)
+                    if binding
+                        .as_ref()
+                        .is_some_and(|binding| binding.turn_id == event.turn_id) =>
+                {
+                    started = Some(event);
+                }
+                EventMsg::TurnComplete(event)
+                    if binding
+                        .as_ref()
+                        .is_some_and(|binding| binding.turn_id == event.turn_id) =>
+                {
+                    completed = Some(event);
+                }
+                EventMsg::TurnAborted(event)
+                    if binding.as_ref().is_some_and(|binding| {
+                        event.turn_id.as_deref() == Some(binding.turn_id.as_str())
+                    }) =>
+                {
+                    aborted = Some(event);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let Some(binding) = binding else {
+        return Ok(None);
+    };
+    let (status, started_at, completed_at, duration_ms) = if let Some(event) = completed {
+        (
+            if event.error.is_some() {
+                DurableTurnIdempotencyStatus::Failed
+            } else {
+                DurableTurnIdempotencyStatus::Completed
+            },
+            event.started_at,
+            event.completed_at,
+            event.duration_ms,
+        )
+    } else if let Some(event) = aborted {
+        (
+            DurableTurnIdempotencyStatus::Interrupted,
+            event.started_at,
+            event.completed_at,
+            event.duration_ms,
+        )
+    } else if let Some(event) = started {
+        (
+            DurableTurnIdempotencyStatus::InProgress,
+            event.started_at,
+            None,
+            None,
+        )
+    } else {
+        (DurableTurnIdempotencyStatus::Reserved, None, None, None)
+    };
+    Ok(Some(DurableTurnIdempotencyMatch {
+        thread_id: meta_line.meta.id,
+        turn_id: binding.turn_id,
+        request_fingerprint: binding.request_fingerprint,
+        status,
+        started_at,
+        completed_at,
+        duration_ms,
+        path,
+    }))
+}
+
+/// Finds the unique durable `(action, originator, idempotency key)` turn reservation across active
+/// and archived rollouts. Multiple bindings fail closed.
+pub async fn find_turn_by_idempotency_key(
+    codex_home: &Path,
+    action: codex_protocol::protocol::TurnIdempotencyAction,
+    originator: &str,
+    key: &str,
+) -> io::Result<Option<DurableTurnIdempotencyMatch>> {
+    let mut visitor = TurnIdempotencyKeyVisitor {
+        action,
+        originator,
+        key,
+        matches: Vec::new(),
+        error: None,
+    };
+    let mut scanned_files = 0usize;
+    let sessions_root = codex_home.join(SESSIONS_SUBDIR);
+    if sessions_root.exists() {
+        walk_rollout_files_unbounded(sessions_root.as_path(), &mut scanned_files, &mut visitor)
+            .await?;
+    }
+    if visitor.error.is_none() && visitor.matches.len() < 2 {
+        let archived_root = codex_home.join(ARCHIVED_SESSIONS_SUBDIR);
+        if archived_root.exists() {
+            walk_flat_rollout_files_unbounded(
+                archived_root.as_path(),
+                &mut scanned_files,
+                &mut visitor,
+            )
+            .await?;
+        }
+    }
+    if let Some(err) = visitor.error {
+        return Err(err);
+    }
+    match visitor.matches.as_slice() {
+        [] => Ok(None),
+        [single] => Ok(Some(single.clone())),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("multiple turns share idempotency key for originator {originator}"),
+        )),
+    }
+}
+
 /// Collects thread items during directory traversal in created_at order,
 /// applying pagination and filters inline.
 struct FilesByCreatedAtVisitor<'a> {
@@ -1082,6 +1392,64 @@ async fn walk_rollout_files(
         }
     }
 
+    Ok(())
+}
+
+async fn walk_rollout_files_unbounded(
+    root: &Path,
+    scanned_files: &mut usize,
+    visitor: &mut impl RolloutFileVisitor,
+) -> io::Result<()> {
+    let year_dirs = collect_dirs_desc(root, |s| s.parse::<u16>().ok()).await?;
+    'outer: for (_year, year_path) in year_dirs.iter() {
+        let month_dirs = collect_dirs_desc(year_path, |s| s.parse::<u8>().ok()).await?;
+        for (_month, month_path) in month_dirs.iter() {
+            let day_dirs = collect_dirs_desc(month_path, |s| s.parse::<u8>().ok()).await?;
+            for (_day, day_path) in day_dirs.iter() {
+                for (ts, id, path) in collect_rollout_day_files(day_path).await? {
+                    *scanned_files += 1;
+                    if let ControlFlow::Break(()) =
+                        visitor.visit(ts, id, path, *scanned_files).await
+                    {
+                        break 'outer;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn walk_flat_rollout_files_unbounded(
+    root: &Path,
+    scanned_files: &mut usize,
+    visitor: &mut impl RolloutFileVisitor,
+) -> io::Result<()> {
+    let mut dir = tokio::fs::read_dir(root).await?;
+    while let Some(entry) = dir.next_entry().await? {
+        if !entry
+            .file_type()
+            .await
+            .map(|file_type| file_type.is_file())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let Some(rollout_file) = compression::RolloutFile::from_path(entry.path()) else {
+            continue;
+        };
+        let Some((ts, id)) = parse_timestamp_uuid_from_filename(rollout_file.plain_file_name())
+        else {
+            continue;
+        };
+        *scanned_files += 1;
+        if let ControlFlow::Break(()) = visitor
+            .visit(ts, id, rollout_file.into_path(), *scanned_files)
+            .await
+        {
+            break;
+        }
+    }
     Ok(())
 }
 

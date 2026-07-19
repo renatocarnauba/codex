@@ -116,6 +116,7 @@ stream_max_retries = 0
 
     let request_id = app_server
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             input: vec![UserInput::Text {
                 text: format!("Use ${SKILL_NAME}"),

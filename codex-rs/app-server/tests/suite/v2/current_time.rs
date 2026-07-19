@@ -58,6 +58,7 @@ async fn current_time_read_round_trip_adds_reminder_to_model_input() -> Result<(
 
     let turn_request_id = app_server
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             input: vec![UserInput::Text {
                 text: "What time is it?".to_string(),

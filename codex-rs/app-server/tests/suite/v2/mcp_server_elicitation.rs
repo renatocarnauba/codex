@@ -210,6 +210,7 @@ async fn openai_form_capability_follows_the_turn_starting_connection() -> Result
         "turn/start",
         /*id*/ 3,
         Some(serde_json::to_value(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             input: vec![V2UserInput::Text {
                 text: "Warm up connectors.".to_string(),
@@ -254,6 +255,7 @@ async fn openai_form_capability_follows_the_turn_starting_connection() -> Result
         "turn/start",
         /*id*/ 6,
         Some(serde_json::to_value(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             input: vec![V2UserInput::Text {
                 text: "Use [$calendar](app://calendar) to run the calendar tool.".to_string(),
@@ -458,6 +460,7 @@ impl ElicitationRoundTripFixture {
 
         let warmup_turn_start_id = mcp
             .send_turn_start_request(TurnStartParams {
+                idempotency_key: None,
                 thread_id: thread.id.clone(),
                 client_user_message_id: None,
                 input: vec![V2UserInput::Text {
@@ -490,6 +493,7 @@ impl ElicitationRoundTripFixture {
 
         let turn_start_id = mcp
             .send_turn_start_request(TurnStartParams {
+                idempotency_key: None,
                 thread_id: thread.id.clone(),
                 client_user_message_id: None,
                 input: vec![V2UserInput::Text {

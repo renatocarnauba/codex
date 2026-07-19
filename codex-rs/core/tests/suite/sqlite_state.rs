@@ -363,6 +363,7 @@ async fn backfill_scans_existing_rollouts() -> Result<()> {
                     timestamp: "2026-01-27T12:00:00Z".to_string(),
                     cwd: codex_home.to_path_buf(),
                     originator: "test".to_string(),
+                    thread_creation_idempotency: None,
                     cli_version: "test".to_string(),
                     source: SessionSource::default(),
                     thread_source: None,

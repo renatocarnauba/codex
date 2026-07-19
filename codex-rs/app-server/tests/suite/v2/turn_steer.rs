@@ -73,6 +73,7 @@ async fn turn_steer_requires_active_turn() -> Result<()> {
 
     let steer_req = mcp
         .send_turn_steer_request(TurnSteerParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: Some("client-steer-message-1".to_string()),
             input: vec![V2UserInput::Text {
@@ -169,6 +170,7 @@ async fn turn_steer_rejects_oversized_text_input() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -195,6 +197,7 @@ async fn turn_steer_rejects_oversized_text_input() -> Result<()> {
     let oversized_input = "x".repeat(MAX_USER_INPUT_TEXT_CHARS + 1);
     let steer_req = mcp
         .send_turn_steer_request(TurnSteerParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -293,6 +296,7 @@ async fn turn_steer_returns_active_turn_id() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -318,6 +322,7 @@ async fn turn_steer_returns_active_turn_id() -> Result<()> {
 
     let steer_req = mcp
         .send_turn_steer_request(TurnSteerParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: Some("client-steer-message-1".to_string()),
             input: vec![V2UserInput::Text {
@@ -440,6 +445,7 @@ async fn turn_steer_rejects_context_only_input_without_merging_context() -> Resu
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -471,6 +477,7 @@ async fn turn_steer_rejects_context_only_input_without_merging_context() -> Resu
     )]));
     let steer_req = mcp
         .send_turn_steer_request(TurnSteerParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: Vec::new(),

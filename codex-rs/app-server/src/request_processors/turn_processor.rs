@@ -1,4 +1,8 @@
 use super::*;
+use sha2::Digest;
+use sha2::Sha256;
+
+const TURN_IDEMPOTENCY_KEY_MAX_LEN: usize = 256;
 use codex_agent_extension::AgentInvocation;
 use codex_agent_extension::AgentRun;
 use codex_agent_extension::AgentRunner;
@@ -92,11 +96,97 @@ pub(crate) struct TurnRequestProcessor {
     arg0_paths: Arg0DispatchPaths,
     config: Arc<Config>,
     config_manager: ConfigManager,
+    thread_store: Arc<dyn ThreadStore>,
     pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
     thread_state_manager: ThreadStateManager,
     thread_watch_manager: ThreadWatchManager,
     thread_list_state_permit: Arc<Semaphore>,
     skills_watcher: Arc<SkillsWatcher>,
+    turn_idempotency_lock: Arc<Mutex<()>>,
+    submitted_turn_idempotency: Arc<
+        Mutex<
+            HashSet<(
+                codex_protocol::protocol::TurnIdempotencyAction,
+                String,
+                String,
+            )>,
+        >,
+    >,
+}
+
+fn validate_turn_idempotency_key(key: &str) -> Result<(), JSONRPCErrorError> {
+    if key.trim().is_empty() {
+        return Err(invalid_request("idempotencyKey must not be empty"));
+    }
+    if key.chars().count() > TURN_IDEMPOTENCY_KEY_MAX_LEN {
+        return Err(invalid_request(format!(
+            "idempotencyKey must be at most {TURN_IDEMPOTENCY_KEY_MAX_LEN} characters"
+        )));
+    }
+    Ok(())
+}
+
+fn canonicalize_json(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(values) => {
+            let sorted = values
+                .into_iter()
+                .map(|(key, value)| (key, canonicalize_json(value)))
+                .collect::<BTreeMap<_, _>>();
+            serde_json::Value::Object(sorted.into_iter().collect())
+        }
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.into_iter().map(canonicalize_json).collect())
+        }
+        value => value,
+    }
+}
+
+fn turn_request_fingerprint(params: &TurnStartParams) -> Result<String, JSONRPCErrorError> {
+    let mut params = params.clone();
+    params.idempotency_key = None;
+    let value = serde_json::to_value(params)
+        .map(canonicalize_json)
+        .map_err(|err| {
+            internal_error(format!("failed to fingerprint turn/start request: {err}"))
+        })?;
+    let bytes = serde_json::to_vec(&value).map_err(|err| {
+        internal_error(format!("failed to fingerprint turn/start request: {err}"))
+    })?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn turn_steer_request_fingerprint(params: &TurnSteerParams) -> Result<String, JSONRPCErrorError> {
+    let mut params = params.clone();
+    params.idempotency_key = None;
+    let value = serde_json::to_value(params)
+        .map(canonicalize_json)
+        .map_err(|err| {
+            internal_error(format!("failed to fingerprint turn/steer request: {err}"))
+        })?;
+    let bytes = serde_json::to_vec(&value).map_err(|err| {
+        internal_error(format!("failed to fingerprint turn/steer request: {err}"))
+    })?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn turn_from_idempotency_match(found: &StoredTurnIdempotency) -> Turn {
+    let status = match found.status.unwrap_or(StoredTurnStatus::InProgress) {
+        StoredTurnStatus::Completed => TurnStatus::Completed,
+        StoredTurnStatus::Interrupted => TurnStatus::Interrupted,
+        StoredTurnStatus::Failed => TurnStatus::Failed,
+        StoredTurnStatus::InProgress => TurnStatus::InProgress,
+    };
+    Turn {
+        id: found.turn_id.clone(),
+        items: Vec::new(),
+        items_view: TurnItemsView::NotLoaded,
+        status,
+        error: None,
+        started_at: found.started_at,
+        completed_at: found.completed_at,
+        duration_ms: found.duration_ms,
+    }
 }
 
 fn map_additional_context(
@@ -147,6 +237,7 @@ impl TurnRequestProcessor {
         arg0_paths: Arg0DispatchPaths,
         config: Arc<Config>,
         config_manager: ConfigManager,
+        thread_store: Arc<dyn ThreadStore>,
         pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
         thread_state_manager: ThreadStateManager,
         thread_watch_manager: ThreadWatchManager,
@@ -163,11 +254,14 @@ impl TurnRequestProcessor {
             arg0_paths,
             config,
             config_manager,
+            thread_store,
             pending_thread_unloads,
             thread_state_manager,
             thread_watch_manager,
             thread_list_state_permit,
             skills_watcher,
+            turn_idempotency_lock: Arc::new(Mutex::new(())),
+            submitted_turn_idempotency: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -485,6 +579,73 @@ impl TurnRequestProcessor {
         app_server_client_version: Option<String>,
         supports_openai_form_elicitation: bool,
     ) -> Result<TurnStartResponse, JSONRPCErrorError> {
+        let requested_thread_id = ThreadId::from_string(&params.thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+        let idempotency_context = if let Some(key) = params.idempotency_key.as_deref() {
+            validate_turn_idempotency_key(key)?;
+            let originator = app_server_client_name.clone().ok_or_else(|| {
+                invalid_request("idempotent turn/start requires an initialized client originator")
+            })?;
+            let fingerprint = turn_request_fingerprint(&params)?;
+            let guard = Arc::clone(&self.turn_idempotency_lock).lock_owned().await;
+            let existing = self
+                .thread_store
+                .find_turn_by_idempotency_key(
+                    codex_protocol::protocol::TurnIdempotencyAction::Start,
+                    originator.as_str(),
+                    key,
+                )
+                .await
+                .map_err(|err| {
+                    internal_error(format!(
+                        "failed to resolve turn/start idempotency key: {err}"
+                    ))
+                })?;
+            if let Some(existing) = existing {
+                if existing.thread_id != requested_thread_id
+                    || existing.request_fingerprint != fingerprint
+                {
+                    return Err(invalid_request(format!(
+                        "idempotencyKey is already bound to turn {} with a different thread or request",
+                        existing.turn_id
+                    )));
+                }
+                let submitted_in_process =
+                    self.submitted_turn_idempotency.lock().await.contains(&(
+                        codex_protocol::protocol::TurnIdempotencyAction::Start,
+                        originator.clone(),
+                        key.to_string(),
+                    ));
+                if existing.status.is_some() || existing.archived || submitted_in_process {
+                    self.outgoing
+                        .record_request_turn_id(&request_id, &existing.turn_id)
+                        .await;
+                    return Ok(TurnStartResponse {
+                        turn: turn_from_idempotency_match(&existing),
+                    });
+                }
+                Some((
+                    originator,
+                    key.to_string(),
+                    fingerprint,
+                    existing.turn_id,
+                    false,
+                    guard,
+                ))
+            } else {
+                Some((
+                    originator,
+                    key.to_string(),
+                    fingerprint,
+                    uuid::Uuid::now_v7().to_string(),
+                    true,
+                    guard,
+                ))
+            }
+        } else {
+            None
+        };
+
         let (thread_id, thread) =
             self.load_thread(&params.thread_id)
                 .await
@@ -493,6 +654,20 @@ impl TurnRequestProcessor {
                 })?;
         self.ensure_direct_input_allowed(&request_id, thread.as_ref())
             .await?;
+        if let Some((originator, _, _, _, _, _)) = idempotency_context.as_ref() {
+            let config_snapshot = thread.config_snapshot().await;
+            if config_snapshot.ephemeral {
+                return Err(invalid_request(
+                    "idempotencyKey cannot be used with an ephemeral thread",
+                ));
+            }
+            if config_snapshot.originator != *originator {
+                return Err(invalid_request(format!(
+                    "connection originator {originator} cannot idempotently start a turn on thread {thread_id} owned by {}",
+                    config_snapshot.originator
+                )));
+            }
+        }
         if let Err(error) = Self::validate_v2_input_limit(&params.input) {
             self.track_error_response(
                 &request_id,
@@ -503,7 +678,7 @@ impl TurnRequestProcessor {
         }
         Self::set_app_server_client_info(
             thread.as_ref(),
-            app_server_client_name,
+            app_server_client_name.clone(),
             app_server_client_version,
         )
         .await
@@ -578,18 +753,66 @@ impl TurnRequestProcessor {
             additional_context,
             thread_settings,
         };
-        let turn_id = thread
-            .submit_user_input_with_client_user_message_id(
-                turn_op,
-                self.request_trace_context(&request_id).await,
-                client_user_message_id,
-            )
-            .await
-            .map_err(|err| {
-                let error = internal_error(format!("failed to start turn: {err}"));
-                self.track_error_response(&request_id, &error, /*error_type*/ None);
-                error
-            })?;
+        let turn_id = if let Some((originator, key, fingerprint, turn_id, is_new, _guard)) =
+            idempotency_context
+        {
+            if is_new {
+                thread
+                    .append_rollout_items(&[RolloutItem::EventMsg(EventMsg::TurnIdempotency(
+                        codex_protocol::protocol::TurnIdempotencyEvent {
+                            action: codex_protocol::protocol::TurnIdempotencyAction::Start,
+                            cancelled: false,
+                            key: key.clone(),
+                            originator: originator.clone(),
+                            turn_id: turn_id.clone(),
+                            request_fingerprint: fingerprint,
+                        },
+                    ))])
+                    .await
+                    .map_err(|err| {
+                        internal_error(format!(
+                            "failed to persist turn/start idempotency reservation: {err}"
+                        ))
+                    })?;
+                thread.flush_rollout().await.map_err(|err| {
+                    internal_error(format!(
+                        "failed to durably flush turn/start idempotency reservation: {err}"
+                    ))
+                })?;
+            }
+            thread
+                .submit_user_input_with_id(
+                    turn_id.clone(),
+                    turn_op,
+                    self.request_trace_context(&request_id).await,
+                    client_user_message_id,
+                )
+                .await
+                .map_err(|err| {
+                    let error = internal_error(format!("failed to start turn: {err}"));
+                    self.track_error_response(&request_id, &error, /*error_type*/ None);
+                    error
+                })?;
+            self.submitted_turn_idempotency.lock().await.insert((
+                codex_protocol::protocol::TurnIdempotencyAction::Start,
+                originator,
+                key,
+            ));
+            turn_id
+        } else {
+            thread
+                .submit_user_input_with_client_user_message_id(
+                    turn_op,
+                    self.request_trace_context(&request_id).await,
+                    client_user_message_id,
+                )
+                .await
+                .map_err(|err| {
+                    let error = internal_error(format!("failed to start turn: {err}"));
+                    self.track_error_response(&request_id, &error, /*error_type*/ None);
+                    error
+                })?
+        };
 
         if turn_has_input {
             let config_snapshot = thread.config_snapshot().await;
@@ -930,18 +1153,76 @@ impl TurnRequestProcessor {
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
     ) -> Result<TurnSteerResponse, JSONRPCErrorError> {
-        let (_, thread) = self
-            .load_thread(&params.thread_id)
-            .await
-            .inspect_err(|error| {
-                self.track_error_response(request_id, error, /*error_type*/ None);
+        let requested_thread_id = ThreadId::from_string(&params.thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+        let idempotency_context = if let Some(key) = params.idempotency_key.as_deref() {
+            validate_turn_idempotency_key(key)?;
+            let originator = app_server_client_name.clone().ok_or_else(|| {
+                invalid_request("idempotent turn/steer requires an initialized client originator")
             })?;
+            let fingerprint = turn_steer_request_fingerprint(&params)?;
+            let guard = Arc::clone(&self.turn_idempotency_lock).lock_owned().await;
+            let existing = self
+                .thread_store
+                .find_turn_by_idempotency_key(
+                    codex_protocol::protocol::TurnIdempotencyAction::Steer,
+                    originator.as_str(),
+                    key,
+                )
+                .await
+                .map_err(|err| {
+                    internal_error(format!(
+                        "failed to resolve turn/steer idempotency key: {err}"
+                    ))
+                })?;
+            if let Some(existing) = existing {
+                if existing.thread_id != requested_thread_id
+                    || existing.request_fingerprint != fingerprint
+                    || existing.turn_id != params.expected_turn_id
+                {
+                    return Err(invalid_request(format!(
+                        "idempotencyKey is already bound to steering action on turn {} with a different thread or request",
+                        existing.turn_id
+                    )));
+                }
+                self.outgoing
+                    .record_request_turn_id(request_id, &existing.turn_id)
+                    .await;
+                return Ok(TurnSteerResponse {
+                    turn_id: existing.turn_id,
+                });
+            }
+            Some((originator, key.to_string(), fingerprint, guard))
+        } else {
+            None
+        };
+
+        let (thread_id, thread) =
+            self.load_thread(&params.thread_id)
+                .await
+                .inspect_err(|error| {
+                    self.track_error_response(request_id, error, /*error_type*/ None);
+                })?;
         self.ensure_direct_input_allowed(request_id, thread.as_ref())
             .await?;
+        if let Some((originator, _, _, _)) = idempotency_context.as_ref() {
+            let config_snapshot = thread.config_snapshot().await;
+            if config_snapshot.ephemeral {
+                return Err(invalid_request(
+                    "idempotencyKey cannot be used with an ephemeral thread",
+                ));
+            }
+            if config_snapshot.originator != *originator {
+                return Err(invalid_request(format!(
+                    "connection originator {originator} cannot idempotently steer thread {thread_id} owned by {}",
+                    config_snapshot.originator
+                )));
+            }
+        }
 
         Self::set_app_server_client_info(
             thread.as_ref(),
-            app_server_client_name,
+            app_server_client_name.clone(),
             app_server_client_version,
         )
         .await
@@ -971,7 +1252,32 @@ impl TurnRequestProcessor {
             .collect();
         let additional_context = map_additional_context(params.additional_context);
 
-        let turn_id = thread
+        if let Some((originator, key, fingerprint, _)) = idempotency_context.as_ref() {
+            thread
+                .append_rollout_items(&[RolloutItem::EventMsg(EventMsg::TurnIdempotency(
+                    codex_protocol::protocol::TurnIdempotencyEvent {
+                        action: codex_protocol::protocol::TurnIdempotencyAction::Steer,
+                        cancelled: false,
+                        key: key.clone(),
+                        originator: originator.clone(),
+                        turn_id: params.expected_turn_id.clone(),
+                        request_fingerprint: fingerprint.clone(),
+                    },
+                ))])
+                .await
+                .map_err(|err| {
+                    internal_error(format!(
+                        "failed to persist turn/steer idempotency reservation: {err}"
+                    ))
+                })?;
+            thread.flush_rollout().await.map_err(|err| {
+                internal_error(format!(
+                    "failed to durably flush turn/steer idempotency reservation: {err}"
+                ))
+            })?;
+        }
+
+        let steer_result = thread
             .steer_input(
                 mapped_items,
                 additional_context,
@@ -979,68 +1285,94 @@ impl TurnRequestProcessor {
                 params.client_user_message_id,
                 params.responsesapi_client_metadata,
             )
-            .await
-            .map_err(|err| {
-                let (message, data, error_type) = match err {
-                    SteerInputError::NoActiveTurn(_) => (
-                        "no active turn to steer".to_string(),
-                        None,
-                        Some(AnalyticsJsonRpcError::TurnSteer(
-                            TurnSteerRequestError::NoActiveTurn,
-                        )),
-                    ),
-                    SteerInputError::ExpectedTurnMismatch { expected, actual } => (
-                        format!("expected active turn id `{expected}` but found `{actual}`"),
-                        None,
-                        Some(AnalyticsJsonRpcError::TurnSteer(
-                            TurnSteerRequestError::ExpectedTurnMismatch,
-                        )),
-                    ),
-                    SteerInputError::ActiveTurnNotSteerable { turn_kind } => {
-                        let (message, turn_steer_error) = match turn_kind {
-                            codex_protocol::protocol::NonSteerableTurnKind::Review => (
-                                "cannot steer a review turn".to_string(),
-                                TurnSteerRequestError::NonSteerableReview,
-                            ),
-                            codex_protocol::protocol::NonSteerableTurnKind::Compact => (
-                                "cannot steer a compact turn".to_string(),
-                                TurnSteerRequestError::NonSteerableCompact,
-                            ),
-                        };
-                        let error = TurnError {
-                            message: message.clone(),
-                            codex_error_info: Some(CodexErrorInfo::ActiveTurnNotSteerable {
-                                turn_kind: turn_kind.into(),
-                            }),
-                            additional_details: None,
-                        };
-                        let data = match serde_json::to_value(error) {
-                            Ok(data) => Some(data),
-                            Err(error) => {
-                                tracing::error!(
-                                    ?error,
-                                    "failed to serialize active-turn-not-steerable turn error"
-                                );
-                                None
-                            }
-                        };
-                        (
-                            message,
-                            data,
-                            Some(AnalyticsJsonRpcError::TurnSteer(turn_steer_error)),
-                        )
-                    }
-                    SteerInputError::EmptyInput => (
-                        "input must not be empty".to_string(),
-                        None,
-                        Some(AnalyticsJsonRpcError::Input(InputError::Empty)),
-                    ),
-                };
-                let mut error = invalid_request(message);
-                error.data = data;
-                self.track_error_response(request_id, &error, error_type);
-                error
+            .await;
+        if steer_result.is_err()
+            && let Some((originator, key, fingerprint, _)) = idempotency_context.as_ref()
+        {
+            thread
+                .append_rollout_items(&[RolloutItem::EventMsg(EventMsg::TurnIdempotency(
+                    codex_protocol::protocol::TurnIdempotencyEvent {
+                        action: codex_protocol::protocol::TurnIdempotencyAction::Steer,
+                        cancelled: true,
+                        key: key.clone(),
+                        originator: originator.clone(),
+                        turn_id: params.expected_turn_id.clone(),
+                        request_fingerprint: fingerprint.clone(),
+                    },
+                ))])
+                .await
+                .map_err(|err| {
+                    internal_error(format!(
+                        "failed to cancel rejected turn/steer idempotency reservation: {err}"
+                    ))
+                })?;
+            thread.flush_rollout().await.map_err(|err| {
+                internal_error(format!(
+                    "failed to flush rejected turn/steer idempotency cancellation: {err}"
+                ))
             })?;
+        }
+        let turn_id = steer_result.map_err(|err| {
+            let (message, data, error_type) = match err {
+                SteerInputError::NoActiveTurn(_) => (
+                    "no active turn to steer".to_string(),
+                    None,
+                    Some(AnalyticsJsonRpcError::TurnSteer(
+                        TurnSteerRequestError::NoActiveTurn,
+                    )),
+                ),
+                SteerInputError::ExpectedTurnMismatch { expected, actual } => (
+                    format!("expected active turn id `{expected}` but found `{actual}`"),
+                    None,
+                    Some(AnalyticsJsonRpcError::TurnSteer(
+                        TurnSteerRequestError::ExpectedTurnMismatch,
+                    )),
+                ),
+                SteerInputError::ActiveTurnNotSteerable { turn_kind } => {
+                    let (message, turn_steer_error) = match turn_kind {
+                        codex_protocol::protocol::NonSteerableTurnKind::Review => (
+                            "cannot steer a review turn".to_string(),
+                            TurnSteerRequestError::NonSteerableReview,
+                        ),
+                        codex_protocol::protocol::NonSteerableTurnKind::Compact => (
+                            "cannot steer a compact turn".to_string(),
+                            TurnSteerRequestError::NonSteerableCompact,
+                        ),
+                    };
+                    let error = TurnError {
+                        message: message.clone(),
+                        codex_error_info: Some(CodexErrorInfo::ActiveTurnNotSteerable {
+                            turn_kind: turn_kind.into(),
+                        }),
+                        additional_details: None,
+                    };
+                    let data = match serde_json::to_value(error) {
+                        Ok(data) => Some(data),
+                        Err(error) => {
+                            tracing::error!(
+                                ?error,
+                                "failed to serialize active-turn-not-steerable turn error"
+                            );
+                            None
+                        }
+                    };
+                    (
+                        message,
+                        data,
+                        Some(AnalyticsJsonRpcError::TurnSteer(turn_steer_error)),
+                    )
+                }
+                SteerInputError::EmptyInput => (
+                    "input must not be empty".to_string(),
+                    None,
+                    Some(AnalyticsJsonRpcError::Input(InputError::Empty)),
+                ),
+            };
+            let mut error = invalid_request(message);
+            error.data = data;
+            self.track_error_response(request_id, &error, error_type);
+            error
+        })?;
         Ok(TurnSteerResponse { turn_id })
     }
 

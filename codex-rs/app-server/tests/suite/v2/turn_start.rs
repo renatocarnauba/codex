@@ -158,6 +158,7 @@ async fn run_local_image_turn(detail: Option<ImageDetail>) -> Result<Vec<Value>>
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::LocalImage {
@@ -256,6 +257,7 @@ async fn turn_start_with_empty_input_runs_model_request() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: Vec::new(),
@@ -360,6 +362,7 @@ async fn turn_start_additional_context_flows_to_model_input() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -449,6 +452,7 @@ async fn turn_start_sends_originator_header() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -525,6 +529,7 @@ async fn turn_start_emits_user_message_item_with_text_elements() -> Result<()> {
     )];
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: Some("client-message-1".to_string()),
             input: vec![V2UserInput::Text {
@@ -640,6 +645,7 @@ async fn turn_start_emits_thread_scoped_warning_notification_for_trimmed_skills(
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -739,6 +745,7 @@ async fn turn_start_sends_service_tier_id_to_model_request() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             service_tier: Some(Some(service_tier_id.clone())),
             input: vec![V2UserInput::Text {
@@ -819,6 +826,7 @@ async fn turn_start_emits_raw_response_completed_with_upstream_usage() -> Result
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             input: vec![V2UserInput::Text {
                 text: "Hello".to_string(),
@@ -912,6 +920,7 @@ async fn thread_start_omits_empty_instruction_overrides_from_model_request() -> 
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -1013,6 +1022,7 @@ async fn turn_start_tracks_thread_originator_in_analytics() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Image {
@@ -1140,6 +1150,7 @@ async fn turn_profile_tracks_blocking_tool_and_follow_up_sampling() -> Result<()
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -1244,6 +1255,7 @@ async fn turn_start_accepts_text_at_limit_with_mention_item() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             client_user_message_id: None,
             input: vec![
@@ -1311,6 +1323,7 @@ async fn turn_start_rejects_combined_oversized_text_input() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             client_user_message_id: None,
             input: vec![
@@ -1389,6 +1402,7 @@ async fn turn_start_rejects_invalid_permission_selection_before_starting_turn() 
     let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(thread_resp)?;
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -1465,6 +1479,7 @@ async fn turn_start_rejects_unknown_environment_before_starting_turn() -> Result
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -1546,6 +1561,7 @@ async fn turn_start_emits_notifications_and_accepts_model_override() -> Result<(
     // Start a turn with only input and thread_id set (no overrides).
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -1599,6 +1615,7 @@ async fn turn_start_emits_notifications_and_accepts_model_override() -> Result<(
     // Send a second turn that exercises the overrides path: change the model.
     let turn_req2 = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -1701,6 +1718,7 @@ async fn turn_start_accepts_collaboration_mode_override_v2() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -1794,6 +1812,7 @@ async fn turn_start_uses_thread_feature_overrides_for_request_user_input_tool_de
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -1869,6 +1888,7 @@ async fn turn_start_accepts_personality_override_v2() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -1949,6 +1969,7 @@ async fn turn_start_ignores_deprecated_multi_agent_mode() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             input: vec![V2UserInput::Text {
                 text: "Hello".to_string(),
@@ -2035,6 +2056,7 @@ async fn thread_start_ignores_deprecated_multi_agent_mode() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             input: vec![V2UserInput::Text {
                 text: "Hello".to_string(),
@@ -2120,6 +2142,7 @@ async fn turn_start_change_personality_mid_thread_v2() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -2145,6 +2168,7 @@ async fn turn_start_change_personality_mid_thread_v2() -> Result<()> {
 
     let turn_req2 = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -2287,6 +2311,7 @@ async fn turn_start_exec_approval_toggle_v2() -> Result<()> {
     // turn/start — expect CommandExecutionRequestApproval request from server
     let first_turn_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -2356,6 +2381,7 @@ async fn turn_start_exec_approval_toggle_v2() -> Result<()> {
     // Second turn with approval_policy=never should not elicit approval
     let second_turn_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -2440,6 +2466,7 @@ async fn turn_start_exec_approval_decline_v2() -> Result<()> {
 
     let turn_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -2599,6 +2626,7 @@ async fn turn_start_explicit_local_environment_updates_legacy_cwd_between_turns(
     // first turn with workspace-write sandbox and first_cwd
     let first_turn = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             environments: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
@@ -2645,6 +2673,7 @@ async fn turn_start_explicit_local_environment_updates_legacy_cwd_between_turns(
     // workspace-write sandbox must follow the local environment cwd.
     let second_turn = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             environments: Some(vec![TurnEnvironmentParams {
                 environment_id: LOCAL_ENVIRONMENT_ID.to_string(),
                 cwd: second_cwd.abs().into(),
@@ -2810,6 +2839,7 @@ stream_max_retries = 0
 
     let first_turn_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -2834,6 +2864,7 @@ stream_max_retries = 0
 
     let second_turn_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -2973,6 +3004,7 @@ async fn run_environment_selection_case(
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -3092,6 +3124,7 @@ async fn turn_start_file_change_approval_v2() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -3291,6 +3324,7 @@ async fn turn_start_does_not_stream_apply_patch_change_updates_without_feature_v
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -3437,6 +3471,7 @@ async fn turn_start_streams_apply_patch_change_updates_v2() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -3571,6 +3606,7 @@ async fn turn_start_emits_spawn_agent_item_with_model_metadata_v2() -> Result<()
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -3792,6 +3828,7 @@ async fn direct_input_to_multi_agent_v2_subagent_is_rejected() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             input: vec![V2UserInput::Text {
                 text: PARENT_PROMPT.to_string(),
@@ -3830,6 +3867,7 @@ async fn direct_input_to_multi_agent_v2_subagent_is_rejected() -> Result<()> {
 
     let direct_turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: child_thread_id.clone(),
             input: vec![V2UserInput::Text {
                 text: "direct app-server turn".to_string(),
@@ -3848,6 +3886,7 @@ async fn direct_input_to_multi_agent_v2_subagent_is_rejected() -> Result<()> {
 
     let direct_steer_req = mcp
         .send_turn_steer_request(TurnSteerParams {
+            idempotency_key: None,
             thread_id: child_thread_id,
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -3973,6 +4012,7 @@ config_file = "./custom-role.toml"
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -4127,6 +4167,7 @@ async fn turn_start_file_change_approval_accept_for_session_persists_v2() -> Res
     // First turn: expect FileChangeRequestApproval, respond with AcceptForSession, and verify the file exists.
     let turn_1_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -4200,6 +4241,7 @@ async fn turn_start_file_change_approval_accept_for_session_persists_v2() -> Res
     // Second turn: apply a patch to the same file. Approval should be skipped due to AcceptForSession.
     let turn_2_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -4307,6 +4349,7 @@ async fn turn_start_file_change_approval_decline_v2() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -4461,6 +4504,7 @@ async fn command_execution_notifications_include_process_id() -> Result<()> {
 
     let turn_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -4598,6 +4642,7 @@ async fn turn_start_with_elevated_override_does_not_persist_project_trust() -> R
 
     let turn_request = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             cwd: Some(workspace.path().to_path_buf()),
             sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::DangerFullAccess),

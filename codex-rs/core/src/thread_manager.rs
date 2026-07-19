@@ -315,6 +315,27 @@ pub fn local_agent_graph_store_from_state_db(
 }
 
 impl ThreadManager {
+    /// Resolves the originator that a new root thread will persist for an app-server request.
+    /// Keeping this resolution in core prevents idempotency namespaces from drifting from the
+    /// originator actually written to the rollout.
+    pub fn effective_new_thread_originator(
+        &self,
+        metrics_service_name: Option<&str>,
+        connection_originator: Option<String>,
+    ) -> String {
+        let env_originator = std::env::var(CODEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR)
+            .is_ok()
+            .then(|| originator().value);
+        effective_originator_value(
+            metrics_service_name,
+            connection_originator,
+            env_originator,
+            /*persisted_originator*/ None,
+            /*inherited_originator*/ None,
+            originator().value,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: &Config,

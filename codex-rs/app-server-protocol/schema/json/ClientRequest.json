@@ -3851,6 +3851,13 @@
             }
           ]
         },
+        "serviceName": {
+          "description": "Optional metrics service identity. Recognized official services determine the effective originator; otherwise the initialized connection identity remains authoritative.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "serviceTier": {
           "type": [
             "string",

@@ -1714,6 +1714,7 @@ async fn webrtc_v1_default_automatic_output_uses_handoff_append() -> Result<()> 
     let turn_request_id = harness
         .mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: harness.thread_id.clone(),
             input: vec![V2UserInput::Text {
                 text: "say the default output".to_string(),
@@ -1778,6 +1779,7 @@ async fn webrtc_v1_client_managed_handoffs_disable_automatic_output() -> Result<
     let turn_request_id = harness
         .mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: harness.thread_id.clone(),
             input: vec![V2UserInput::Text {
                 text: "leave realtime delivery to the client".to_string(),
@@ -2029,6 +2031,7 @@ async fn realtime_automatic_standalone_output_is_item_and_append_speaks() -> Res
     let turn_request_id = harness
         .mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: harness.thread_id.clone(),
             input: vec![V2UserInput::Text {
                 text: "do something quietly".to_string(),
@@ -2191,6 +2194,7 @@ async fn websocket_v2_assistant_output_without_handoff_reaches_realtime_context(
     let request_id = harness
         .mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: harness.thread_id.clone(),
             input: vec![V2UserInput::Text {
                 text: "direct text turn".to_string(),

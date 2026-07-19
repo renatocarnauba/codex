@@ -225,6 +225,7 @@ async fn orchestrator_skill_can_read_referenced_resource_without_an_executor() -
     .await;
     let turn_start_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             input: vec![UserInput::Text {
                 text: format!("Use ${SKILL_NAME}"),
@@ -337,6 +338,7 @@ async fn orchestrator_skill_can_read_referenced_resource_without_an_executor() -
 
     let refreshed_turn_start_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             input: vec![UserInput::Text {
                 text: format!("Use ${SKILL_NAME} after refreshing MCP"),
@@ -409,6 +411,7 @@ async fn local_executor_does_not_expose_orchestrator_skills() -> Result<()> {
     .await;
     let turn_start_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             input: vec![UserInput::Text {
                 text: format!("Use ${SKILL_NAME}"),
@@ -490,6 +493,7 @@ enabled = false
     .await;
     let turn_start_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             input: vec![UserInput::Text {
                 text: format!("Use ${SKILL_NAME}"),

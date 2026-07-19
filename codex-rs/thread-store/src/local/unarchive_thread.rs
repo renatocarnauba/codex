@@ -1,13 +1,12 @@
 use codex_rollout::find_archived_thread_path_by_id_str;
-use codex_rollout::read_thread_item_from_rollout;
 use codex_rollout::rollout_date_parts;
 
 use super::LocalThreadStore;
 use super::helpers::matching_rollout_file_name;
 use super::helpers::scoped_rollout_path;
-use super::helpers::stored_thread_from_rollout_item;
 use super::helpers::touch_modified_time;
 use crate::ArchiveThreadParams;
+use crate::ReadThreadParams;
 use crate::StoredThread;
 use crate::ThreadStoreError;
 use crate::ThreadStoreResult;
@@ -79,25 +78,17 @@ pub(super) async fn unarchive_thread(
             .await;
     }
 
-    let item = read_thread_item_from_rollout(restored_path.clone())
-        .await
-        .ok_or_else(|| ThreadStoreError::Internal {
-            message: format!(
-                "failed to read unarchived thread {}",
-                restored_path.display()
-            ),
-        })?;
-    stored_thread_from_rollout_item(
-        item,
-        /*archived*/ false,
-        store.config.default_model_provider_id.as_str(),
+    // A crash-idempotent thread may have no user-message preview yet. Use the canonical reader,
+    // which falls back to SessionMeta, instead of requiring a listable ThreadItem.
+    super::read_thread::read_thread(
+        store,
+        ReadThreadParams {
+            thread_id,
+            include_archived: false,
+            include_history: false,
+        },
     )
-    .ok_or_else(|| ThreadStoreError::Internal {
-        message: format!(
-            "failed to read unarchived thread id from {}",
-            restored_path.display()
-        ),
-    })
+    .await
 }
 
 #[cfg(test)]

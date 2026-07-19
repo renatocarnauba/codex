@@ -582,6 +582,7 @@ async fn start_default_thread(mcp: &mut TestAppServer) -> Result<String> {
 async fn materialize_thread_rollout(mcp: &mut TestAppServer, thread_id: &str) -> Result<()> {
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread_id.to_string(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {

@@ -153,6 +153,7 @@ async fn live_app_server_review_prompt_item_is_not_rendered() {
     };
     chat.handle_server_notification(
         ServerNotification::ItemStarted(ItemStartedNotification {
+            client_name: None,
             thread_id: "thread-1".to_string(),
             turn_id: "turn-1".to_string(),
             started_at_ms: 0,
@@ -1222,6 +1223,7 @@ async fn interrupted_turn_after_goal_budget_limited_uses_budget_message_snapshot
     chat.handle_server_notification(
         codex_app_server_protocol::ServerNotification::TurnStarted(
             codex_app_server_protocol::TurnStartedNotification {
+                client_name: None,
                 thread_id: "thread-1".to_string(),
                 turn: codex_app_server_protocol::Turn {
                     id: "turn-1".to_string(),

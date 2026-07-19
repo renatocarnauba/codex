@@ -38,6 +38,11 @@ pub(super) async fn create_thread(
             params.dynamic_tools,
         )
         .with_session_id(params.session_id)
+        .with_thread_creation_idempotency(
+            params
+                .extra_config
+                .and_then(|extra| extra.thread_creation_idempotency),
+        )
         .with_selected_capability_roots(params.selected_capability_roots)
         .with_multi_agent_version(params.multi_agent_version)
         .with_history_mode(params.history_mode)

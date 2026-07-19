@@ -23,6 +23,7 @@ const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn text_turn_params(thread_id: String, prompt: &str) -> TurnStartParams {
     TurnStartParams {
+        idempotency_key: None,
         thread_id,
         input: vec![V2UserInput::Text {
             text: prompt.to_string(),

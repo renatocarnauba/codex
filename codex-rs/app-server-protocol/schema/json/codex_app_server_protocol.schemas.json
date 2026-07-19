@@ -17080,6 +17080,33 @@
         "title": "SendAddCreditsNudgeEmailResponse",
         "type": "object"
       },
+      "ServerConnection": {
+        "properties": {
+          "clientName": {
+            "description": "Initialized `clientInfo.name`; no request payloads or authorization material are exposed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "description": "Process-local opaque connection id. It is not a credential and changes after reconnect.",
+            "type": "string"
+          },
+          "isCurrent": {
+            "type": "boolean"
+          },
+          "requestAttestation": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "isCurrent",
+          "requestAttestation"
+        ],
+        "type": "object"
+      },
       "ServerRequestResolvedNotification": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
@@ -18138,6 +18165,13 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "serviceName": {
+            "description": "Optional metrics service identity. Recognized official services determine the effective originator; otherwise the initialized connection identity remains authoritative.",
+            "type": [
+              "string",
+              "null"
             ]
           },
           "serviceTier": {

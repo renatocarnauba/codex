@@ -90,6 +90,7 @@ async fn app_server_emits_structured_tool_call_timing_event() -> Result<()> {
 
     let turn_start_id = app_server
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             input: vec![UserInput::Text {
                 text: "run a command".to_string(),

@@ -456,6 +456,7 @@ async fn send_turn_and_wait(
 ) -> Result<String> {
     let turn_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread_id.to_string(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {

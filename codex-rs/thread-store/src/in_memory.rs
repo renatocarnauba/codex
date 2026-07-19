@@ -10,6 +10,7 @@ use chrono::Utc;
 use codex_protocol::ThreadId;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionContextWindow;
 use codex_protocol::protocol::SessionMeta;
@@ -30,6 +31,8 @@ use crate::ResumeThreadParams;
 use crate::StoredModelContext;
 use crate::StoredThread;
 use crate::StoredThreadHistory;
+use crate::StoredTurnIdempotency;
+use crate::StoredTurnStatus;
 use crate::ThreadMetadataPatch;
 use crate::ThreadPage;
 use crate::ThreadRelationFilter;
@@ -434,6 +437,11 @@ impl InMemoryThreadStore {
             agent_role: params.source.get_agent_role(),
             agent_path: params.source.get_agent_path().map(Into::into),
             originator: params.originator.clone(),
+            thread_creation_idempotency: params
+                .extra_config
+                .as_ref()
+                .and_then(|extra| extra.thread_creation_idempotency.clone())
+                .map(Box::new),
             source: params.source.clone(),
             thread_source: params.thread_source.clone(),
             model_provider: Some(params.metadata.model_provider.clone()),
@@ -683,6 +691,139 @@ impl ThreadStore for InMemoryThreadStore {
 
     fn read_thread(&self, params: ReadThreadParams) -> ThreadStoreFuture<'_, StoredThread> {
         Box::pin(InMemoryThreadStore::read_thread(self, params))
+    }
+
+    fn find_thread_by_creation_idempotency_key(
+        &self,
+        originator: &str,
+        key: &str,
+    ) -> ThreadStoreFuture<'_, Option<StoredThread>> {
+        let originator = originator.to_string();
+        let key = key.to_string();
+        Box::pin(async move {
+            let state = self.state.lock().await;
+            let matches = state
+                .created_threads
+                .iter()
+                .filter_map(|(thread_id, created)| {
+                    (created.originator == originator
+                        && created
+                            .extra_config
+                            .as_ref()
+                            .and_then(|extra| extra.thread_creation_idempotency.as_ref())
+                            .map(|value| value.key.as_str())
+                            == Some(key.as_str()))
+                    .then_some(*thread_id)
+                })
+                .collect::<Vec<_>>();
+            match matches.as_slice() {
+                [] => Ok(None),
+                [thread_id] => {
+                    stored_thread_from_state(&state, *thread_id, /*include_history*/ false)
+                        .map(Some)
+                }
+                _ => Err(ThreadStoreError::Internal {
+                    message: format!(
+                        "multiple threads share creation idempotency key for originator {originator}"
+                    ),
+                }),
+            }
+        })
+    }
+
+    fn find_turn_by_idempotency_key(
+        &self,
+        action: codex_protocol::protocol::TurnIdempotencyAction,
+        originator: &str,
+        key: &str,
+    ) -> ThreadStoreFuture<'_, Option<StoredTurnIdempotency>> {
+        let originator = originator.to_string();
+        let key = key.to_string();
+        Box::pin(async move {
+            let state = self.state.lock().await;
+            let mut matches = Vec::new();
+            for (thread_id, history) in &state.histories {
+                let Some(created) = state.created_threads.get(thread_id) else {
+                    continue;
+                };
+                if created.originator != originator {
+                    continue;
+                }
+                for item in history {
+                    let RolloutItem::EventMsg(EventMsg::TurnIdempotency(binding)) = item else {
+                        continue;
+                    };
+                    if binding.action != action
+                        || binding.originator != originator
+                        || binding.key != key
+                    {
+                        continue;
+                    }
+                    if binding.cancelled {
+                        matches.retain(|existing: &StoredTurnIdempotency| {
+                            existing.thread_id != *thread_id
+                        });
+                        continue;
+                    }
+                    let mut status = None;
+                    let mut started_at = None;
+                    let mut completed_at = None;
+                    let mut duration_ms = None;
+                    for item in history {
+                        let RolloutItem::EventMsg(event) = item else {
+                            continue;
+                        };
+                        match event {
+                            EventMsg::TurnStarted(event) if event.turn_id == binding.turn_id => {
+                                status = Some(StoredTurnStatus::InProgress);
+                                started_at = event.started_at;
+                            }
+                            EventMsg::TurnComplete(event) if event.turn_id == binding.turn_id => {
+                                status = Some(if event.error.is_some() {
+                                    StoredTurnStatus::Failed
+                                } else {
+                                    StoredTurnStatus::Completed
+                                });
+                                started_at = event.started_at;
+                                completed_at = event.completed_at;
+                                duration_ms = event.duration_ms;
+                            }
+                            EventMsg::TurnAborted(event)
+                                if event.turn_id.as_deref() == Some(binding.turn_id.as_str()) =>
+                            {
+                                status = Some(StoredTurnStatus::Interrupted);
+                                started_at = event.started_at;
+                                completed_at = event.completed_at;
+                                duration_ms = event.duration_ms;
+                            }
+                            _ => {}
+                        }
+                    }
+                    matches.push(StoredTurnIdempotency {
+                        thread_id: *thread_id,
+                        turn_id: binding.turn_id.clone(),
+                        request_fingerprint: binding.request_fingerprint.clone(),
+                        status,
+                        started_at,
+                        completed_at,
+                        duration_ms,
+                        archived: false,
+                    });
+                }
+            }
+            matches.dedup_by(|left, right| {
+                left.thread_id == right.thread_id && left.turn_id == right.turn_id
+            });
+            match matches.as_slice() {
+                [] => Ok(None),
+                [single] => Ok(Some(single.clone())),
+                _ => Err(ThreadStoreError::Internal {
+                    message: format!(
+                        "multiple turns share idempotency key for originator {originator}"
+                    ),
+                }),
+            }
+        })
     }
 
     fn read_thread_by_rollout_path(

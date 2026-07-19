@@ -1328,6 +1328,10 @@ pub enum EventMsg {
     #[serde(rename = "task_started", alias = "turn_started")]
     TurnStarted(TurnStartedEvent),
 
+    /// Durable app-server reservation for an idempotent turn action.
+    /// App-server writes this directly to the rollout before accepting the core submission.
+    TurnIdempotency(TurnIdempotencyEvent),
+
     /// Persistent thread-settings overrides from the correlated submission have
     /// been applied to the session configuration.
     ThreadSettingsApplied(ThreadSettingsAppliedEvent),
@@ -2026,6 +2030,26 @@ pub struct TurnStartedEvent {
     pub model_context_window: Option<i64>,
     #[serde(default)]
     pub collaboration_mode_kind: ModeKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnIdempotencyAction {
+    Start,
+    Steer,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct TurnIdempotencyEvent {
+    pub action: TurnIdempotencyAction,
+    /// A later matching cancellation releases a reservation whose core submission was rejected.
+    #[serde(default)]
+    pub cancelled: bool,
+    pub key: String,
+    pub originator: String,
+    pub turn_id: String,
+    /// SHA-256 of the canonical request with `idempotencyKey` removed.
+    pub request_fingerprint: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
@@ -3066,6 +3090,34 @@ pub struct HistoryPosition {
 /// NOTE: There used to be an `instructions` field here, which stored user_instructions, but we
 /// now save that on TurnContext. base_instructions stores the base instructions for the session,
 /// and should be used when there is no config override.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadCreationIdempotencyKind {
+    Start,
+    Fork,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema, TS)]
+pub struct ThreadCreationIdempotency {
+    pub key: String,
+    pub kind: ThreadCreationIdempotencyKind,
+    /// Exact `cwd` argument supplied to `thread/start`, before config resolution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_cwd: Option<String>,
+    /// Exact `threadSource` argument supplied to `thread/start`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_source: Option<ThreadSource>,
+    /// Exact `serviceName` argument supplied to `thread/start`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_thread_id: Option<ThreadId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before_turn_id: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, TS)]
 pub struct SessionMeta {
     pub session_id: SessionId,
@@ -3077,6 +3129,11 @@ pub struct SessionMeta {
     pub timestamp: String,
     pub cwd: PathBuf,
     pub originator: String,
+    /// Optional app-server thread creation idempotency contract. The key is scoped by
+    /// `originator`; the remaining fields reject accidental key reuse with a different identity.
+    /// Boxed to keep `RolloutItem` from growing with this uncommon metadata extension.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_creation_idempotency: Option<Box<ThreadCreationIdempotency>>,
     pub cli_version: String,
     #[serde(default)]
     pub source: SessionSource,
@@ -3137,6 +3194,7 @@ impl Default for SessionMeta {
             timestamp: String::new(),
             cwd: PathBuf::new(),
             originator: String::new(),
+            thread_creation_idempotency: None,
             cli_version: String::new(),
             source: SessionSource::default(),
             thread_source: None,

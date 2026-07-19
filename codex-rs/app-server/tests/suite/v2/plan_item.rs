@@ -157,6 +157,7 @@ async fn start_plan_mode_turn(mcp: &mut TestAppServer) -> Result<codex_app_serve
     };
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             client_user_message_id: None,
             input: vec![V2UserInput::Text {

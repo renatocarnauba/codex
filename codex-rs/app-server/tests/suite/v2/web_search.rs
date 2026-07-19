@@ -115,6 +115,7 @@ async fn standalone_web_search_round_trips_output() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread_id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {

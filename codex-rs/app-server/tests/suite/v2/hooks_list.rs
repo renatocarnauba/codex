@@ -771,6 +771,7 @@ command = "python3 {hook_script_path}"
 
     let first_turn_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -833,6 +834,7 @@ command = "python3 {hook_script_path}"
 
     let second_turn_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -903,6 +905,7 @@ command = "python3 {hook_script_path}"
 
     let third_turn_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -1049,6 +1052,7 @@ command = "python3 {hook_script_path}"
 
     let first_turn_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -1101,6 +1105,7 @@ command = "python3 {hook_script_path}"
 
     let second_turn_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             client_user_message_id: None,
             input: vec![V2UserInput::Text {

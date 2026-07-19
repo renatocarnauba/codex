@@ -166,6 +166,7 @@ fn write_rollout_with_user_message(
                     timestamp: "2026-06-01T14:26:25Z".to_string(),
                     cwd: home.to_path_buf(),
                     originator: "test".to_string(),
+                    thread_creation_idempotency: None,
                     cli_version: "test".to_string(),
                     source: SessionSource::Cli,
                     thread_source: None,

@@ -277,6 +277,24 @@ impl CodexThread {
             .await
     }
 
+    /// Submit user input with a turn id that was durably reserved by app-server.
+    pub async fn submit_user_input_with_id(
+        &self,
+        turn_id: String,
+        op: Op,
+        trace: Option<W3cTraceContext>,
+        client_user_message_id: Option<String>,
+    ) -> CodexResult<()> {
+        self.session
+            .services
+            .agent_control
+            .ensure_execution_capacity_for_op(self.session.thread_id(), &op)
+            .await?;
+        self.io
+            .submit_user_input_with_id(turn_id, op, trace, client_user_message_id)
+            .await
+    }
+
     /// Persist whether this thread is eligible for future memory generation.
     pub async fn set_thread_memory_mode(&self, mode: ThreadMemoryMode) -> anyhow::Result<()> {
         self.session.set_thread_memory_mode(mode).await

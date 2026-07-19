@@ -143,6 +143,7 @@ fn turn_started_emits_turn_started_event() {
 
     let collected =
         processor.collect_thread_events(ServerNotification::TurnStarted(TurnStartedNotification {
+            client_name: None,
             thread_id: "thread-1".to_string(),
             turn: Turn {
                 id: "turn-1".to_string(),
@@ -183,6 +184,7 @@ fn command_execution_started_and_completed_translate_to_thread_events() {
 
     let started =
         processor.collect_thread_events(ServerNotification::ItemStarted(ItemStartedNotification {
+            client_name: None,
             item: command_item,
             thread_id: "thread-1".to_string(),
             turn_id: "turn-1".to_string(),
@@ -405,6 +407,7 @@ fn web_search_start_and_completion_reuse_item_id() {
 
     let started =
         processor.collect_thread_events(ServerNotification::ItemStarted(ItemStartedNotification {
+            client_name: None,
             item: ThreadItem::WebSearch(ApiWebSearchItem {
                 id: "search-1".to_string(),
                 query: String::new(),
@@ -476,6 +479,7 @@ fn mcp_tool_call_begin_and_end_emit_item_events() {
 
     let started =
         processor.collect_thread_events(ServerNotification::ItemStarted(ItemStartedNotification {
+            client_name: None,
             item: ThreadItem::McpToolCall {
                 id: "mcp-1".to_string(),
                 server: "server_a".to_string(),
@@ -618,6 +622,7 @@ fn mcp_tool_call_defaults_arguments_and_preserves_structured_content() {
 
     let started =
         processor.collect_thread_events(ServerNotification::ItemStarted(ItemStartedNotification {
+            client_name: None,
             item: ThreadItem::McpToolCall {
                 id: "mcp-3".to_string(),
                 server: "server_c".to_string(),
@@ -716,6 +721,7 @@ fn collab_spawn_begin_and_end_emit_item_events() {
 
     let started =
         processor.collect_thread_events(ServerNotification::ItemStarted(ItemStartedNotification {
+            client_name: None,
             item: ThreadItem::CollabAgentToolCall {
                 id: "collab-1".to_string(),
                 tool: CollabAgentTool::SpawnAgent,
@@ -947,6 +953,7 @@ fn agent_message_item_started_is_ignored() {
 
     let collected =
         processor.collect_thread_events(ServerNotification::ItemStarted(ItemStartedNotification {
+            client_name: None,
             item: ThreadItem::AgentMessage {
                 id: "msg-1".to_string(),
                 text: "hello".to_string(),
@@ -1330,6 +1337,7 @@ fn turn_completion_reconciles_started_items_from_turn_items() {
 
     let started =
         processor.collect_thread_events(ServerNotification::ItemStarted(ItemStartedNotification {
+            client_name: None,
             item: ThreadItem::CommandExecution {
                 id: "cmd-1".to_string(),
                 command: "ls".to_string(),

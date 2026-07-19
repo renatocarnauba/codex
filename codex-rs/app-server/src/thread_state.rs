@@ -323,6 +323,17 @@ impl ThreadStateManager {
             .insert(connection_id, capabilities);
     }
 
+    pub(crate) async fn live_connections(&self) -> Vec<(ConnectionId, ConnectionCapabilities)> {
+        let state = self.state.lock().await;
+        let mut connections = state
+            .live_connections
+            .iter()
+            .map(|(connection_id, capabilities)| (*connection_id, capabilities.clone()))
+            .collect::<Vec<_>>();
+        connections.sort_by_key(|(connection_id, _)| connection_id.0);
+        connections
+    }
+
     pub(crate) async fn first_attestation_capable_connection_for_thread(
         &self,
         thread_id: ThreadId,

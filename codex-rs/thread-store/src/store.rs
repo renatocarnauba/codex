@@ -21,6 +21,7 @@ use crate::SearchThreadsParams;
 use crate::StoredModelContext;
 use crate::StoredThread;
 use crate::StoredThreadHistory;
+use crate::StoredTurnIdempotency;
 use crate::ThreadOccurrenceSearchPage;
 use crate::ThreadPage;
 use crate::ThreadSearchPage;
@@ -95,6 +96,36 @@ pub trait ThreadStore: Any + Send + Sync {
 
     /// Reads a thread summary and optionally its persisted history.
     fn read_thread(&self, params: ReadThreadParams) -> ThreadStoreFuture<'_, StoredThread>;
+
+    /// Finds a thread created with the same durable app-server start key, including archives.
+    /// Implementations must scope the key by the effective thread originator and fail closed if
+    /// more than one matching thread exists.
+    fn find_thread_by_creation_idempotency_key(
+        &self,
+        _originator: &str,
+        _key: &str,
+    ) -> ThreadStoreFuture<'_, Option<StoredThread>> {
+        Box::pin(async {
+            Err(ThreadStoreError::Unsupported {
+                operation: "find_thread_by_creation_idempotency_key",
+            })
+        })
+    }
+
+    /// Finds a turn accepted with the same durable app-server key, including archived threads.
+    /// Implementations must scope by originator and fail closed on duplicate bindings.
+    fn find_turn_by_idempotency_key(
+        &self,
+        _action: codex_protocol::protocol::TurnIdempotencyAction,
+        _originator: &str,
+        _key: &str,
+    ) -> ThreadStoreFuture<'_, Option<StoredTurnIdempotency>> {
+        Box::pin(async {
+            Err(ThreadStoreError::Unsupported {
+                operation: "find_turn_by_idempotency_key",
+            })
+        })
+    }
 
     /// Reads a rollout-backed thread by path when the store supports path-addressed lookups.
     ///

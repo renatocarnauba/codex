@@ -16,6 +16,7 @@ use codex_protocol::protocol::GitInfo;
 use codex_protocol::protocol::MultiAgentVersion;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::ThreadCreationIdempotency;
 use codex_protocol::protocol::ThreadHistoryMode;
 use codex_protocol::protocol::ThreadMemoryMode as MemoryMode;
 use codex_protocol::protocol::ThreadSource;
@@ -62,8 +63,26 @@ pub struct ThreadPersistenceMetadata {
 }
 
 /// Extra configuration fields for a thread.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtraConfig {
+    /// Durable identity used to make app-server thread creation idempotent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_creation_idempotency: Option<ThreadCreationIdempotency>,
+}
+
+/// Durable result of resolving an app-server `turn/start` idempotency key.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExtraConfig {}
+pub struct StoredTurnIdempotency {
+    pub thread_id: ThreadId,
+    pub turn_id: String,
+    pub request_fingerprint: String,
+    /// `None` means the turn id is durably reserved but core has not persisted its start yet.
+    pub status: Option<StoredTurnStatus>,
+    pub started_at: Option<i64>,
+    pub completed_at: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub archived: bool,
+}
 
 /// Parameters required to create a persisted thread.
 #[derive(Clone, Debug, Serialize, Deserialize)]

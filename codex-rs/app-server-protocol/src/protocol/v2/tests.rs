@@ -1883,6 +1883,7 @@ fn client_request_turn_start_granular_approval_policy_is_marked_experimental() {
         &crate::ClientRequest::TurnStart {
             request_id: crate::RequestId::Integer(4),
             params: TurnStartParams {
+                idempotency_key: None,
                 thread_id: "thr_123".to_string(),
                 client_user_message_id: None,
                 input: Vec::new(),
@@ -4144,6 +4145,7 @@ fn turn_start_params_preserve_explicit_null_service_tier() {
     );
 
     let without_override = TurnStartParams {
+        idempotency_key: None,
         thread_id: "thread_123".to_string(),
         client_user_message_id: None,
         input: vec![],

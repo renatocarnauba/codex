@@ -21,6 +21,8 @@ use codex_app_server_protocol::JSONRPCNotification;
 use codex_app_server_protocol::JSONRPCRequest;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
+use codex_app_server_protocol::ServerConnectionListResponse;
+use codex_app_server_protocol::ThreadForkResponse;
 use codex_app_server_protocol::ThreadListResponse;
 use codex_app_server_protocol::ThreadLoadedListParams;
 use codex_app_server_protocol::ThreadLoadedListResponse;
@@ -304,6 +306,529 @@ async fn websocket_thread_originator_survives_restart_and_all_thread_reads() -> 
 }
 
 #[tokio::test]
+async fn websocket_thread_start_idempotency_survives_restart_archive_and_origin_isolation()
+-> Result<()> {
+    let server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
+    let codex_home = TempDir::new()?;
+    let workspace = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri(), "never")?;
+    set_project_trust_level(codex_home.path(), workspace.path(), TrustLevel::Trusted)?;
+
+    let key = "belie-manager:loop-115:run-7";
+    let start_params = json!({
+        "model": "mock-model",
+        "cwd": workspace.path(),
+        "threadSource": "appServer",
+        "idempotencyKey": key
+    });
+
+    let (mut process, bind_addr) = spawn_websocket_server(codex_home.path()).await?;
+    let mut manager = connect_websocket(bind_addr).await?;
+    send_initialize_request_with_experimental_api(&mut manager, /*id*/ 1, "belie_manager").await?;
+    read_response_for_id(&mut manager, /*id*/ 1).await?;
+    send_request(
+        &mut manager,
+        "thread/start",
+        /*id*/ 2,
+        Some(start_params.clone()),
+    )
+    .await?;
+    let first: ThreadStartResponse = to_response(read_response_for_id(&mut manager, 2).await?)?;
+    assert_eq!(first.thread.originator.as_deref(), Some("belie_manager"));
+
+    // Simulate the client losing the response association and the daemon itself restarting.
+    process.kill().await?;
+    let (mut restarted_process, restarted_bind_addr) =
+        spawn_websocket_server(codex_home.path()).await?;
+    let mut reconnected_manager = connect_websocket(restarted_bind_addr).await?;
+    send_initialize_request_with_experimental_api(
+        &mut reconnected_manager,
+        /*id*/ 3,
+        "belie_manager",
+    )
+    .await?;
+    read_response_for_id(&mut reconnected_manager, /*id*/ 3).await?;
+    send_request(
+        &mut reconnected_manager,
+        "thread/start",
+        /*id*/ 4,
+        Some(start_params.clone()),
+    )
+    .await?;
+    // A resumed response is intentionally wire-compatible with thread/start's response shape.
+    let retried: ThreadStartResponse =
+        to_response(read_response_for_id(&mut reconnected_manager, 4).await?)?;
+    assert_eq!(retried.thread.id, first.thread.id);
+    assert_eq!(retried.thread.originator.as_deref(), Some("belie_manager"));
+
+    // Reconciliation may archive the just-created task before the manager can bind it. The key
+    // remains global: retry unarchives and resumes the same durable thread instead of duplicating.
+    send_request(
+        &mut reconnected_manager,
+        "thread/archive",
+        /*id*/ 5,
+        Some(json!({"threadId": first.thread.id})),
+    )
+    .await?;
+    read_response_for_id(&mut reconnected_manager, /*id*/ 5).await?;
+    send_request(
+        &mut reconnected_manager,
+        "thread/start",
+        /*id*/ 6,
+        Some(start_params.clone()),
+    )
+    .await?;
+    let unarchived: ThreadStartResponse =
+        to_response(read_response_for_id(&mut reconnected_manager, 6).await?)?;
+    assert_eq!(unarchived.thread.id, first.thread.id);
+
+    // A key cannot be silently rebound to a different immutable start identity.
+    let mut conflicting = start_params.clone();
+    conflicting["cwd"] = json!(codex_home.path());
+    send_request(
+        &mut reconnected_manager,
+        "thread/start",
+        /*id*/ 7,
+        Some(conflicting),
+    )
+    .await?;
+    let conflict = read_error_for_id(&mut reconnected_manager, /*id*/ 7).await?;
+    assert!(conflict.error.message.contains("already bound"));
+
+    // Desktop has a different effective originator namespace and cannot claim the manager task.
+    let mut desktop = connect_websocket(restarted_bind_addr).await?;
+    send_initialize_request_with_experimental_api(&mut desktop, /*id*/ 8, "Codex Desktop").await?;
+    read_response_for_id(&mut desktop, /*id*/ 8).await?;
+    let desktop_params = json!({
+        "model": "mock-model",
+        "cwd": workspace.path(),
+        "serviceName": "codex_work_desktop",
+        "threadSource": "appServer",
+        "idempotencyKey": key
+    });
+    send_request(
+        &mut desktop,
+        "thread/start",
+        /*id*/ 9,
+        Some(desktop_params),
+    )
+    .await?;
+    let desktop_thread: ThreadStartResponse =
+        to_response(read_response_for_id(&mut desktop, 9).await?)?;
+    assert_ne!(desktop_thread.thread.id, first.thread.id);
+    assert_eq!(
+        desktop_thread.thread.originator.as_deref(),
+        Some("codex_work_desktop")
+    );
+
+    restarted_process.kill().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn websocket_thread_fork_idempotency_is_concurrent_durable_and_owner_scoped() -> Result<()> {
+    let server = create_mock_responses_server_sequence_unchecked(vec![
+        create_final_assistant_message_sse_response("source ready")?,
+    ])
+    .await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri(), "never")?;
+
+    let (mut process, bind_addr) = spawn_websocket_server(codex_home.path()).await?;
+    let mut manager_one = connect_websocket(bind_addr).await?;
+    let mut manager_two = connect_websocket(bind_addr).await?;
+    send_initialize_request_with_experimental_api(&mut manager_one, 1, "belie_manager").await?;
+    read_response_for_id(&mut manager_one, 1).await?;
+    send_initialize_request_with_experimental_api(&mut manager_two, 2, "belie_manager").await?;
+    read_response_for_id(&mut manager_two, 2).await?;
+
+    let source_id = start_thread(&mut manager_one, /*id*/ 3).await?;
+    start_turn_and_read_origins(
+        &mut manager_one,
+        /*id*/ 4,
+        &source_id,
+        "materialize fork source",
+    )
+    .await?;
+    let key = "belie-manager:action-115:successor-fork";
+    let fork_params = json!({
+        "threadId": source_id,
+        "threadSource": "appServer",
+        "excludeTurns": true,
+        "idempotencyKey": key
+    });
+
+    // Two Manager connections racing the same durable action must converge on one fork.
+    send_request(
+        &mut manager_one,
+        "thread/fork",
+        /*id*/ 5,
+        Some(fork_params.clone()),
+    )
+    .await?;
+    send_request(
+        &mut manager_two,
+        "thread/fork",
+        /*id*/ 6,
+        Some(fork_params.clone()),
+    )
+    .await?;
+    let fork_one: ThreadForkResponse =
+        to_response(read_response_for_id(&mut manager_one, 5).await?)?;
+    let fork_two: ThreadForkResponse =
+        to_response(read_response_for_id(&mut manager_two, 6).await?)?;
+    assert_eq!(fork_one.thread.id, fork_two.thread.id);
+    assert_eq!(fork_one.thread.originator.as_deref(), Some("belie_manager"));
+
+    process.kill().await?;
+    let (mut restarted_process, restarted_bind_addr) =
+        spawn_websocket_server(codex_home.path()).await?;
+    let mut manager = connect_websocket(restarted_bind_addr).await?;
+    send_initialize_request_with_experimental_api(&mut manager, 7, "belie_manager").await?;
+    read_response_for_id(&mut manager, 7).await?;
+    send_request(
+        &mut manager,
+        "thread/fork",
+        /*id*/ 8,
+        Some(fork_params.clone()),
+    )
+    .await?;
+    let after_restart: ThreadForkResponse =
+        to_response(read_response_for_id(&mut manager, 8).await?)?;
+    assert_eq!(after_restart.thread.id, fork_one.thread.id);
+
+    send_request(
+        &mut manager,
+        "thread/archive",
+        /*id*/ 9,
+        Some(json!({"threadId": fork_one.thread.id})),
+    )
+    .await?;
+    read_response_for_id(&mut manager, 9).await?;
+    send_request(
+        &mut manager,
+        "thread/fork",
+        /*id*/ 10,
+        Some(fork_params.clone()),
+    )
+    .await?;
+    let after_archive: ThreadForkResponse =
+        to_response(read_response_for_id(&mut manager, 10).await?)?;
+    assert_eq!(after_archive.thread.id, fork_one.thread.id);
+
+    let mut conflicting = fork_params.clone();
+    conflicting["lastTurnId"] = json!("different-boundary");
+    send_request(
+        &mut manager,
+        "thread/fork",
+        /*id*/ 11,
+        Some(conflicting),
+    )
+    .await?;
+    let conflict = read_error_for_id(&mut manager, 11).await?;
+    assert!(conflict.error.message.contains("different fork source"));
+
+    let mut desktop = connect_websocket(restarted_bind_addr).await?;
+    send_initialize_request_with_experimental_api(&mut desktop, 12, "Codex Desktop").await?;
+    read_response_for_id(&mut desktop, 12).await?;
+    send_request(
+        &mut desktop,
+        "thread/fork",
+        /*id*/ 13,
+        Some(fork_params.clone()),
+    )
+    .await?;
+    let ownership_error = read_error_for_id(&mut desktop, 13).await?;
+    assert!(
+        ownership_error
+            .error
+            .message
+            .contains("cannot idempotently fork")
+    );
+
+    send_request(
+        &mut manager,
+        "thread/list",
+        /*id*/ 14,
+        Some(json!({"limit": 100})),
+    )
+    .await?;
+    let listed: ThreadListResponse = to_response(read_response_for_id(&mut manager, 14).await?)?;
+    let forks = listed
+        .data
+        .iter()
+        .filter(|thread| thread.id == fork_one.thread.id)
+        .collect::<Vec<_>>();
+    assert_eq!(forks.len(), 1);
+    assert_eq!(forks[0].id, fork_one.thread.id);
+
+    restarted_process.kill().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn websocket_turn_start_idempotency_is_concurrent_and_survives_restart() -> Result<()> {
+    let server = create_mock_responses_server_sequence_unchecked(vec![
+        create_final_assistant_message_sse_response("exactly once")?,
+    ])
+    .await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri(), "never")?;
+
+    let (mut process, bind_addr) = spawn_websocket_server(codex_home.path()).await?;
+    let mut manager_one = connect_websocket(bind_addr).await?;
+    let mut manager_two = connect_websocket(bind_addr).await?;
+    send_initialize_request_with_experimental_api(&mut manager_one, 1, "belie_manager").await?;
+    read_response_for_id(&mut manager_one, 1).await?;
+    send_initialize_request_with_experimental_api(&mut manager_two, 2, "belie_manager").await?;
+    read_response_for_id(&mut manager_two, 2).await?;
+
+    let thread_id = start_thread(&mut manager_one, 3).await?;
+
+    let key = "belie-manager:run-115:turn-9";
+    let turn_params = json!({
+        "threadId": thread_id,
+        "input": [{"type": "text", "text": "execute this action", "textElements": []}],
+        "idempotencyKey": key
+    });
+
+    // Two live connections for the same originator racing the same action converge on one turn.
+    send_request(&mut manager_one, "turn/start", 5, Some(turn_params.clone())).await?;
+    send_request(&mut manager_two, "turn/start", 6, Some(turn_params.clone())).await?;
+    let first: TurnStartResponse = to_response(read_response_for_id(&mut manager_one, 5).await?)?;
+    let concurrent: TurnStartResponse =
+        to_response(read_response_for_id(&mut manager_two, 6).await?)?;
+    assert_eq!(concurrent.turn.id, first.turn.id);
+
+    // Wait for the accepted action to become terminal before simulating daemon loss.
+    timeout(DEFAULT_READ_TIMEOUT, async {
+        loop {
+            let notification = read_jsonrpc_message(&mut manager_one).await?;
+            if let JSONRPCMessage::Notification(notification) = notification
+                && notification.method == "turn/completed"
+                && notification
+                    .params
+                    .as_ref()
+                    .and_then(|params| params.get("turn"))
+                    .and_then(|turn| turn.get("id"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some(first.turn.id.as_str())
+            {
+                return Ok::<(), anyhow::Error>(());
+            }
+        }
+    })
+    .await??;
+
+    process.kill().await?;
+    let (mut restarted_process, restarted_bind_addr) =
+        spawn_websocket_server(codex_home.path()).await?;
+    let mut manager = connect_websocket(restarted_bind_addr).await?;
+    send_initialize_request_with_experimental_api(&mut manager, 7, "belie_manager").await?;
+    read_response_for_id(&mut manager, 7).await?;
+    send_request(&mut manager, "turn/start", 8, Some(turn_params.clone())).await?;
+    let retried: TurnStartResponse = to_response(read_response_for_id(&mut manager, 8).await?)?;
+    assert_eq!(retried.turn.id, first.turn.id);
+
+    let mut conflicting = turn_params;
+    conflicting["input"][0]["text"] = json!("different action");
+    send_request(&mut manager, "turn/start", 9, Some(conflicting)).await?;
+    let conflict = read_error_for_id(&mut manager, 9).await?;
+    assert!(conflict.error.message.contains("already bound"));
+
+    let requests = server
+        .received_requests()
+        .await
+        .context("failed to fetch idempotent turn model requests")?;
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.url.path().ends_with("/responses"))
+            .count(),
+        1,
+        "concurrent and post-restart retries must not invoke the model twice"
+    );
+
+    restarted_process.kill().await?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn websocket_turn_steer_idempotency_is_concurrent_and_survives_restart() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let workdir = TempDir::new()?;
+    let server = create_mock_responses_server_sequence_unchecked(vec![
+        create_shell_command_sse_response(
+            vec!["sleep".to_string(), "2".to_string()],
+            Some(workdir.path()),
+            Some(10_000),
+            "call_idempotent_steer_sleep",
+        )?,
+        create_final_assistant_message_sse_response("steered once")?,
+    ])
+    .await;
+    create_config_toml(codex_home.path(), &server.uri(), "never")?;
+
+    let (mut process, bind_addr) = spawn_websocket_server(codex_home.path()).await?;
+    let mut manager_one = connect_websocket(bind_addr).await?;
+    let mut manager_two = connect_websocket(bind_addr).await?;
+    send_initialize_request_with_experimental_api(&mut manager_one, 1, "belie_manager").await?;
+    read_response_for_id(&mut manager_one, 1).await?;
+    send_initialize_request_with_experimental_api(&mut manager_two, 2, "belie_manager").await?;
+    read_response_for_id(&mut manager_two, 2).await?;
+
+    let thread_id = start_thread(&mut manager_one, 3).await?;
+    send_request(
+        &mut manager_one,
+        "turn/start",
+        4,
+        Some(serde_json::to_value(TurnStartParams {
+            idempotency_key: None,
+            thread_id: thread_id.clone(),
+            input: vec![UserInput::Text {
+                text: "run sleep".to_string(),
+                text_elements: Vec::new(),
+            }],
+            cwd: Some(workdir.path().to_path_buf()),
+            ..Default::default()
+        })?),
+    )
+    .await?;
+    let (turn_response, _) =
+        read_response_and_notification_for_method(&mut manager_one, 4, "turn/started").await?;
+    let started: TurnStartResponse = to_response(turn_response)?;
+
+    let key = "belie-manager:run-115:steer-3";
+    let steer_params = json!({
+        "threadId": thread_id,
+        "expectedTurnId": started.turn.id,
+        "clientUserMessageId": "idempotent-steer-message",
+        "input": [{"type": "text", "text": "steer exactly once", "textElements": []}],
+        "idempotencyKey": key
+    });
+    send_request(
+        &mut manager_one,
+        "turn/steer",
+        5,
+        Some(steer_params.clone()),
+    )
+    .await?;
+    send_request(
+        &mut manager_two,
+        "turn/steer",
+        6,
+        Some(steer_params.clone()),
+    )
+    .await?;
+    let first: TurnSteerResponse = to_response(read_response_for_id(&mut manager_one, 5).await?)?;
+    let concurrent: TurnSteerResponse =
+        to_response(read_response_for_id(&mut manager_two, 6).await?)?;
+    assert_eq!(first.turn_id, started.turn.id);
+    assert_eq!(concurrent.turn_id, first.turn_id);
+
+    timeout(DEFAULT_READ_TIMEOUT, async {
+        loop {
+            if let JSONRPCMessage::Notification(notification) =
+                read_jsonrpc_message(&mut manager_one).await?
+                && notification.method == "turn/completed"
+            {
+                return Ok::<(), anyhow::Error>(());
+            }
+        }
+    })
+    .await??;
+
+    process.kill().await?;
+    let (mut restarted_process, restarted_bind_addr) =
+        spawn_websocket_server(codex_home.path()).await?;
+    let mut manager = connect_websocket(restarted_bind_addr).await?;
+    send_initialize_request_with_experimental_api(&mut manager, 7, "belie_manager").await?;
+    read_response_for_id(&mut manager, 7).await?;
+    send_request(&mut manager, "turn/steer", 8, Some(steer_params.clone())).await?;
+    let retried: TurnSteerResponse = to_response(read_response_for_id(&mut manager, 8).await?)?;
+    assert_eq!(retried.turn_id, first.turn_id);
+
+    let mut conflicting = steer_params;
+    conflicting["input"][0]["text"] = json!("changed steering input");
+    send_request(&mut manager, "turn/steer", 9, Some(conflicting)).await?;
+    let conflict = read_error_for_id(&mut manager, 9).await?;
+    assert!(conflict.error.message.contains("already bound"));
+
+    let requests = server
+        .received_requests()
+        .await
+        .context("failed to fetch idempotent steer model requests")?;
+    let responses_requests = requests
+        .iter()
+        .filter(|request| request.url.path().ends_with("/responses"))
+        .collect::<Vec<_>>();
+    assert_eq!(responses_requests.len(), 2);
+    let second_request_body: serde_json::Value = responses_requests[1].body_json()?;
+    assert_eq!(
+        second_request_body
+            .to_string()
+            .matches("steer exactly once")
+            .count(),
+        1,
+        "concurrent and post-restart retries must enqueue steering input once"
+    );
+
+    restarted_process.kill().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn websocket_connection_list_reports_initialized_live_client_identity() -> Result<()> {
+    let server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri(), "never")?;
+
+    let (mut process, bind_addr) = spawn_websocket_server(codex_home.path()).await?;
+    let mut manager = connect_websocket(bind_addr).await?;
+    let mut desktop = connect_websocket(bind_addr).await?;
+    send_initialize_request_with_experimental_api(&mut manager, 1, "belie_manager").await?;
+    read_response_for_id(&mut manager, 1).await?;
+    send_initialize_request_with_experimental_api(&mut desktop, 2, "Codex Desktop").await?;
+    read_response_for_id(&mut desktop, 2).await?;
+
+    send_request(&mut manager, "server/connection/list", 3, Some(json!({}))).await?;
+    let listed: ServerConnectionListResponse =
+        to_response(read_response_for_id(&mut manager, 3).await?)?;
+    assert_eq!(listed.data.len(), 2);
+    assert_eq!(
+        listed
+            .data
+            .iter()
+            .filter_map(|connection| connection.client_name.as_deref())
+            .collect::<Vec<_>>(),
+        vec!["Codex Desktop", "belie_manager"]
+    );
+    assert_eq!(
+        listed
+            .data
+            .iter()
+            .filter(|connection| connection.is_current)
+            .filter_map(|connection| connection.client_name.as_deref())
+            .collect::<Vec<_>>(),
+        vec!["belie_manager"]
+    );
+
+    desktop.close(None).await?;
+    send_request(&mut manager, "server/connection/list", 4, Some(json!({}))).await?;
+    let after_disconnect: ServerConnectionListResponse =
+        to_response(read_response_for_id(&mut manager, 4).await?)?;
+    assert_eq!(after_disconnect.data.len(), 1);
+    assert_eq!(
+        after_disconnect.data[0].client_name.as_deref(),
+        Some("belie_manager")
+    );
+
+    process.kill().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn websocket_shared_server_routes_dynamic_tools_only_to_the_registering_client() -> Result<()>
 {
     let call_id = "manager-callback-1";
@@ -360,6 +885,7 @@ async fn websocket_shared_server_routes_dynamic_tools_only_to_the_registering_cl
         "turn/start",
         /*id*/ 5,
         Some(serde_json::to_value(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             input: vec![UserInput::Text {
                 text: "report progress".to_string(),
@@ -432,6 +958,152 @@ async fn websocket_shared_server_routes_dynamic_tools_only_to_the_registering_cl
     Ok(())
 }
 
+#[tokio::test]
+async fn websocket_dynamic_tool_owner_reconnects_mid_turn_without_desktop_leak() -> Result<()> {
+    let call_id = "manager-reconnect-callback";
+    let server = create_mock_responses_server_sequence_unchecked(vec![
+        responses::sse(vec![
+            responses::ev_response_created("resp-reconnect-1"),
+            responses::ev_function_call(
+                call_id,
+                "report_progress",
+                &serde_json::to_string(&json!({"message": "still working"}))?,
+            ),
+            responses::ev_completed("resp-reconnect-1"),
+        ]),
+        create_final_assistant_message_sse_response("done after reconnect")?,
+    ])
+    .await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri(), "never")?;
+
+    let (mut process, bind_addr) = spawn_websocket_server(codex_home.path()).await?;
+    let mut manager = connect_websocket(bind_addr).await?;
+    let mut desktop = connect_websocket(bind_addr).await?;
+    send_initialize_request_with_experimental_api(&mut manager, 1, "belie_manager").await?;
+    read_response_for_id(&mut manager, 1).await?;
+    send_initialize_request_with_experimental_api(&mut desktop, 2, "Codex Desktop").await?;
+    read_response_for_id(&mut desktop, 2).await?;
+
+    send_request(
+        &mut manager,
+        "thread/start",
+        /*id*/ 3,
+        Some(json!({
+            "model": "mock-model",
+            "dynamicTools": [{
+                "name": "report_progress",
+                "description": "Report progress to the run owner",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"message": {"type": "string"}},
+                    "required": ["message"],
+                    "additionalProperties": false
+                }
+            }]
+        })),
+    )
+    .await?;
+    let started: ThreadStartResponse = to_response(read_response_for_id(&mut manager, 3).await?)?;
+
+    // Desktop may observe/start the turn, but it never owns the dynamic capability.
+    send_request(
+        &mut desktop,
+        "turn/start",
+        /*id*/ 4,
+        Some(serde_json::to_value(TurnStartParams {
+            idempotency_key: None,
+            thread_id: started.thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "report progress".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })?),
+    )
+    .await?;
+    read_response_for_id(&mut desktop, 4).await?;
+    let first_dynamic_request = timeout(DEFAULT_READ_TIMEOUT, async {
+        loop {
+            if let JSONRPCMessage::Request(request) = read_jsonrpc_message(&mut manager).await?
+                && request.method == "item/tool/call"
+            {
+                return Ok::<_, anyhow::Error>(request);
+            }
+        }
+    })
+    .await??;
+    assert_eq!(
+        first_dynamic_request.params.as_ref().unwrap()["callId"],
+        call_id
+    );
+    assert_no_request(&mut desktop, Duration::from_millis(250)).await?;
+
+    // Drop the owner before answering. The pending request stays parked in the app-server.
+    manager.close(None).await?;
+    sleep(Duration::from_millis(100)).await;
+    let mut replacement_manager = connect_websocket(bind_addr).await?;
+    send_initialize_request_with_experimental_api(&mut replacement_manager, 5, "belie_manager")
+        .await?;
+    read_response_for_id(&mut replacement_manager, 5).await?;
+    send_request(
+        &mut replacement_manager,
+        "thread/resume",
+        /*id*/ 6,
+        Some(json!({"threadId": started.thread.id})),
+    )
+    .await?;
+
+    let mut resume_response = None;
+    let mut replayed_request = None;
+    while resume_response.is_none() || replayed_request.is_none() {
+        match read_jsonrpc_message(&mut replacement_manager).await? {
+            JSONRPCMessage::Response(response) if response.id == RequestId::Integer(6) => {
+                resume_response = Some(response);
+            }
+            JSONRPCMessage::Request(request) if request.method == "item/tool/call" => {
+                replayed_request = Some(request);
+            }
+            _ => {}
+        }
+    }
+    let resumed: ThreadResumeResponse = to_response(resume_response.unwrap())?;
+    assert_eq!(resumed.thread.id, started.thread.id);
+    assert_eq!(resumed.thread.turns.len(), 1);
+    let replayed_request = replayed_request.unwrap();
+    assert_eq!(replayed_request.params.as_ref().unwrap()["callId"], call_id);
+    assert_no_request(&mut desktop, Duration::from_millis(250)).await?;
+
+    send_jsonrpc(
+        &mut replacement_manager,
+        JSONRPCMessage::Response(JSONRPCResponse {
+            id: replayed_request.id,
+            result: serde_json::to_value(DynamicToolCallResponse {
+                content_items: vec![DynamicToolCallOutputContentItem::InputText {
+                    text: "replacement manager accepted".to_string(),
+                }],
+                success: true,
+            })?,
+        }),
+    )
+    .await?;
+    timeout(DEFAULT_READ_TIMEOUT, async {
+        loop {
+            if let JSONRPCMessage::Notification(notification) =
+                read_jsonrpc_message(&mut replacement_manager).await?
+                && notification.method == "turn/completed"
+            {
+                return Ok::<(), anyhow::Error>(());
+            }
+        }
+    })
+    .await??;
+    assert_no_request(&mut desktop, Duration::from_millis(250)).await?;
+
+    process.kill().await?;
+    Ok(())
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn websocket_shared_server_identifies_the_client_that_steers_a_turn() -> Result<()> {
@@ -465,6 +1137,7 @@ async fn websocket_shared_server_identifies_the_client_that_steers_a_turn() -> R
         "turn/start",
         /*id*/ 4,
         Some(serde_json::to_value(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread_id.clone(),
             input: vec![UserInput::Text {
                 text: "run sleep".to_string(),
@@ -484,6 +1157,7 @@ async fn websocket_shared_server_identifies_the_client_that_steers_a_turn() -> R
         "turn/steer",
         /*id*/ 5,
         Some(serde_json::to_value(TurnSteerParams {
+            idempotency_key: None,
             thread_id: thread_id.clone(),
             client_user_message_id: Some("manager-steer".to_string()),
             input: vec![UserInput::Text {
@@ -1237,6 +1911,7 @@ async fn start_turn_and_read_origins(
         "turn/start",
         id,
         Some(serde_json::to_value(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread_id.to_string(),
             input: vec![UserInput::Text {
                 text: text.to_string(),

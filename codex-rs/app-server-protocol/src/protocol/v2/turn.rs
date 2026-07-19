@@ -70,6 +70,11 @@ pub struct AdditionalContextEntry {
 #[ts(export_to = "v2/")]
 pub struct TurnStartParams {
     pub thread_id: String,
+    /// Durable exactly-once key for accepting this turn. The namespace is the initialized
+    /// connection originator, and retries must carry an identical request.
+    #[experimental("turn/start.idempotencyKey")]
+    #[ts(optional = nullable)]
+    pub idempotency_key: Option<String>,
     #[ts(optional = nullable)]
     pub client_user_message_id: Option<String>,
     pub input: Vec<UserInput>,
@@ -174,6 +179,10 @@ pub struct TurnStartResponse {
 #[ts(export_to = "v2/")]
 pub struct TurnSteerParams {
     pub thread_id: String,
+    /// Durable exactly-once key for accepting this steering input.
+    #[experimental("turn/steer.idempotencyKey")]
+    #[ts(optional = nullable)]
+    pub idempotency_key: Option<String>,
     #[ts(optional = nullable)]
     pub client_user_message_id: Option<String>,
     pub input: Vec<UserInput>,

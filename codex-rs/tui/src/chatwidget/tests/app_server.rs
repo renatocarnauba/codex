@@ -77,6 +77,7 @@ fn start_safety_buffering_test_turn(
     chat.record_safety_buffering_turn(turn_id.to_string(), &turn);
     chat.handle_server_notification(
         ServerNotification::TurnStarted(TurnStartedNotification {
+            client_name: None,
             thread_id: thread_id.to_string(),
             turn: AppServerTurn {
                 id: turn_id.to_string(),
@@ -444,6 +445,7 @@ async fn collab_spawn_end_shows_requested_model_and_effort() {
 
     chat.handle_server_notification(
         ServerNotification::ItemStarted(ItemStartedNotification {
+            client_name: None,
             thread_id: "thread-1".to_string(),
             turn_id: "turn-1".to_string(),
             started_at_ms: 0,
@@ -581,6 +583,7 @@ async fn live_app_server_turn_completed_clears_working_status_after_answer_item(
 
     chat.handle_server_notification(
         ServerNotification::TurnStarted(TurnStartedNotification {
+            client_name: None,
             thread_id: "thread-1".to_string(),
             turn: AppServerTurn {
                 id: "turn-1".to_string(),
@@ -650,6 +653,7 @@ async fn live_app_server_turn_started_sets_feedback_turn_id() {
 
     chat.handle_server_notification(
         ServerNotification::TurnStarted(TurnStartedNotification {
+            client_name: None,
             thread_id: "thread-1".to_string(),
             turn: AppServerTurn {
                 id: "turn-1".to_string(),
@@ -760,6 +764,7 @@ async fn live_app_server_file_change_item_started_preserves_changes() {
 
     chat.handle_server_notification(
         ServerNotification::ItemStarted(ItemStartedNotification {
+            client_name: None,
             thread_id: "thread-1".to_string(),
             turn_id: "turn-1".to_string(),
             started_at_ms: 0,
@@ -794,6 +799,7 @@ async fn live_app_server_command_execution_strips_shell_wrapper() {
 
     chat.handle_server_notification(
         ServerNotification::ItemStarted(ItemStartedNotification {
+            client_name: None,
             thread_id: "thread-1".to_string(),
             turn_id: "turn-1".to_string(),
             started_at_ms: 0,
@@ -872,6 +878,7 @@ async fn live_app_server_collab_wait_items_render_history() {
 
     chat.handle_server_notification(
         ServerNotification::ItemStarted(ItemStartedNotification {
+            client_name: None,
             thread_id: "thread-1".to_string(),
             turn_id: "turn-1".to_string(),
             started_at_ms: 0,
@@ -949,6 +956,7 @@ async fn live_app_server_collab_spawn_completed_renders_requested_model_and_effo
 
     chat.handle_server_notification(
         ServerNotification::ItemStarted(ItemStartedNotification {
+            client_name: None,
             thread_id: "thread-1".to_string(),
             turn_id: "turn-1".to_string(),
             started_at_ms: 0,
@@ -1010,6 +1018,7 @@ async fn live_app_server_failed_turn_does_not_duplicate_error_history() {
 
     chat.handle_server_notification(
         ServerNotification::TurnStarted(TurnStartedNotification {
+            client_name: None,
             thread_id: "thread-1".to_string(),
             turn: AppServerTurn {
                 id: "turn-1".to_string(),
@@ -1108,6 +1117,7 @@ async fn live_app_server_stream_recovery_restores_previous_status_header() {
 
     chat.handle_server_notification(
         ServerNotification::TurnStarted(TurnStartedNotification {
+            client_name: None,
             thread_id: "thread-1".to_string(),
             turn: AppServerTurn {
                 id: "turn-1".to_string(),
@@ -1166,6 +1176,7 @@ async fn live_app_server_server_overloaded_error_renders_warning() {
 
     chat.handle_server_notification(
         ServerNotification::TurnStarted(TurnStartedNotification {
+            client_name: None,
             thread_id: "thread-1".to_string(),
             turn: AppServerTurn {
                 id: "turn-1".to_string(),
@@ -1208,6 +1219,7 @@ async fn live_app_server_cyber_policy_error_renders_dedicated_notice() {
 
     chat.handle_server_notification(
         ServerNotification::TurnStarted(TurnStartedNotification {
+            client_name: None,
             thread_id: "thread-1".to_string(),
             turn: AppServerTurn {
                 id: "turn-1".to_string(),

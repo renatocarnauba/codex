@@ -49,6 +49,7 @@ pub use types::StoredThreadOccurrence;
 pub use types::StoredThreadSearchResult;
 pub use types::StoredTurn;
 pub use types::StoredTurnError;
+pub use types::StoredTurnIdempotency;
 pub use types::StoredTurnItemsView;
 pub use types::StoredTurnStatus;
 pub use types::ThreadMetadataPatch;

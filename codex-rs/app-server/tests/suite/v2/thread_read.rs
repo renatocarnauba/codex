@@ -1889,6 +1889,7 @@ async fn paginated_history_lists_use_projected_turns_and_items() -> Result<()> {
 
     let turn_start_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread_id.to_string(),
             client_user_message_id: None,
             input: vec![UserInput::Text {
@@ -1982,6 +1983,7 @@ async fn thread_read_reports_system_error_idle_flag_after_failed_turn() -> Resul
 
     let turn_start_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![UserInput::Text {

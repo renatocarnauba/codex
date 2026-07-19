@@ -44,6 +44,8 @@ use crate::SearchThreadsParams;
 use crate::StoredModelContext;
 use crate::StoredThread;
 use crate::StoredThreadHistory;
+use crate::StoredTurnIdempotency;
+use crate::StoredTurnStatus;
 use crate::ThreadOccurrenceSearchPage;
 use crate::ThreadPage;
 use crate::ThreadSearchPage;
@@ -339,6 +341,88 @@ impl ThreadStore for LocalThreadStore {
 
     fn read_thread(&self, params: ReadThreadParams) -> ThreadStoreFuture<'_, StoredThread> {
         Box::pin(async move { read_thread::read_thread(self, params).await })
+    }
+
+    fn find_thread_by_creation_idempotency_key(
+        &self,
+        originator: &str,
+        key: &str,
+    ) -> ThreadStoreFuture<'_, Option<StoredThread>> {
+        let originator = originator.to_string();
+        let key = key.to_string();
+        Box::pin(async move {
+            let Some((_thread_id, path)) = codex_rollout::find_thread_by_creation_idempotency_key(
+                self.config.codex_home.as_path(),
+                originator.as_str(),
+                key.as_str(),
+            )
+            .await
+            .map_err(|err| ThreadStoreError::Internal {
+                message: format!("failed to find thread creation idempotency key: {err}"),
+            })?
+            else {
+                return Ok(None);
+            };
+            read_thread::read_thread_by_rollout_path(
+                self, path, /*include_archived*/ true, /*include_history*/ false,
+            )
+            .await
+            .map(Some)
+        })
+    }
+
+    fn find_turn_by_idempotency_key(
+        &self,
+        action: codex_protocol::protocol::TurnIdempotencyAction,
+        originator: &str,
+        key: &str,
+    ) -> ThreadStoreFuture<'_, Option<StoredTurnIdempotency>> {
+        let originator = originator.to_string();
+        let key = key.to_string();
+        Box::pin(async move {
+            let Some(found) = codex_rollout::find_turn_by_idempotency_key(
+                self.config.codex_home.as_path(),
+                action,
+                originator.as_str(),
+                key.as_str(),
+            )
+            .await
+            .map_err(|err| ThreadStoreError::Internal {
+                message: format!("failed to find turn idempotency key: {err}"),
+            })?
+            else {
+                return Ok(None);
+            };
+            let status = match found.status {
+                codex_rollout::DurableTurnIdempotencyStatus::Reserved => None,
+                codex_rollout::DurableTurnIdempotencyStatus::InProgress => {
+                    Some(StoredTurnStatus::InProgress)
+                }
+                codex_rollout::DurableTurnIdempotencyStatus::Completed => {
+                    Some(StoredTurnStatus::Completed)
+                }
+                codex_rollout::DurableTurnIdempotencyStatus::Interrupted => {
+                    Some(StoredTurnStatus::Interrupted)
+                }
+                codex_rollout::DurableTurnIdempotencyStatus::Failed => {
+                    Some(StoredTurnStatus::Failed)
+                }
+            };
+            Ok(Some(StoredTurnIdempotency {
+                thread_id: found.thread_id,
+                turn_id: found.turn_id,
+                request_fingerprint: found.request_fingerprint,
+                status,
+                started_at: found.started_at,
+                completed_at: found.completed_at,
+                duration_ms: found.duration_ms,
+                archived: found.path.starts_with(
+                    self.config
+                        .codex_home
+                        .join(codex_rollout::ARCHIVED_SESSIONS_SUBDIR),
+                ),
+            }))
+        })
     }
 
     fn read_thread_by_rollout_path(

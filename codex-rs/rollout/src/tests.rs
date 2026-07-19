@@ -1333,6 +1333,7 @@ async fn test_updated_at_uses_file_mtime() -> Result<()> {
                 timestamp: ts.to_string(),
                 cwd: ".".into(),
                 originator: "test_originator".into(),
+                thread_creation_idempotency: None,
                 cli_version: "test_version".into(),
                 source: SessionSource::VSCode,
                 thread_source: None,

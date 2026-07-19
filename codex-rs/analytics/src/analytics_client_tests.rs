@@ -322,6 +322,7 @@ fn sample_turn_start_request(thread_id: &str, request_id: i64) -> ClientRequest 
     ClientRequest::TurnStart {
         request_id: RequestId::Integer(request_id),
         params: TurnStartParams {
+            idempotency_key: None,
             thread_id: thread_id.to_string(),
             client_user_message_id: None,
             input: vec![
@@ -356,6 +357,7 @@ fn sample_turn_start_response(turn_id: &str) -> ClientResponsePayload {
 
 fn sample_turn_started_notification(thread_id: &str, turn_id: &str) -> ServerNotification {
     ServerNotification::TurnStarted(TurnStartedNotification {
+        client_name: None,
         thread_id: thread_id.to_string(),
         turn: Turn {
             id: turn_id.to_string(),
@@ -455,6 +457,7 @@ fn sample_turn_steer_request(
     ClientRequest::TurnSteer {
         request_id: RequestId::Integer(request_id),
         params: TurnSteerParams {
+            idempotency_key: None,
             thread_id: thread_id.to_string(),
             expected_turn_id: expected_turn_id.to_string(),
             client_user_message_id: None,
@@ -758,6 +761,7 @@ async fn ingest_completed_command_execution_item(
         .ingest(
             AnalyticsFact::Notification(Box::new(ServerNotification::ItemStarted(
                 ItemStartedNotification {
+                    client_name: None,
                     thread_id: thread_id.to_string(),
                     turn_id: "turn-1".to_string(),
                     started_at_ms: 1_000,
@@ -2290,6 +2294,7 @@ async fn item_lifecycle_notifications_publish_command_execution_event() {
         .ingest(
             AnalyticsFact::Notification(Box::new(ServerNotification::ItemStarted(
                 ItemStartedNotification {
+                    client_name: None,
                     thread_id: "thread-1".to_string(),
                     turn_id: "turn-1".to_string(),
                     started_at_ms: 1_000,
@@ -3149,6 +3154,7 @@ async fn subagent_tool_items_inherit_parent_connection_metadata() {
         .ingest(
             AnalyticsFact::Notification(Box::new(ServerNotification::ItemStarted(
                 ItemStartedNotification {
+                    client_name: None,
                     thread_id: "thread-subagent".to_string(),
                     turn_id: "turn-subagent".to_string(),
                     started_at_ms: 1_000,
@@ -4453,6 +4459,7 @@ async fn turn_event_counts_completed_tool_items() {
             .ingest(
                 AnalyticsFact::Notification(Box::new(ServerNotification::ItemStarted(
                     ItemStartedNotification {
+                        client_name: None,
                         thread_id: "thread-2".to_string(),
                         turn_id: "turn-2".to_string(),
                         started_at_ms: 998,

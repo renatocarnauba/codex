@@ -20,6 +20,7 @@ use super::helpers::rollout_path_is_archived;
 use super::helpers::set_thread_name_from_title;
 use super::helpers::stored_thread_from_rollout_item;
 use super::live_writer;
+use crate::ExtraConfig;
 use crate::ReadThreadParams;
 use crate::StoredThread;
 use crate::StoredThreadHistory;
@@ -273,6 +274,14 @@ async fn read_thread_from_rollout_path(
     })?;
     thread.rollout_path = Some(codex_rollout::plain_rollout_path(path.as_path()));
     let meta_line = read_required_session_meta_line(path.as_path()).await?;
+    thread.extra_config =
+        meta_line
+            .meta
+            .thread_creation_idempotency
+            .clone()
+            .map(|thread_creation_idempotency| ExtraConfig {
+                thread_creation_idempotency: Some(*thread_creation_idempotency),
+            });
     thread.forked_from_id = meta_line.meta.forked_from_id;
     thread.parent_thread_id = meta_line.meta.parent_thread_id;
     thread.history_mode = meta_line.meta.history_mode;
@@ -357,7 +366,12 @@ async fn stored_thread_from_sqlite_metadata(
         permission_profile_from_metadata_value(&metadata.sandbox_policy, metadata.cwd.as_path());
     Ok(StoredThread {
         thread_id: metadata.id,
-        extra_config: None,
+        extra_config: session_meta
+            .as_ref()
+            .and_then(|meta| meta.thread_creation_idempotency.clone())
+            .map(|thread_creation_idempotency| ExtraConfig {
+                thread_creation_idempotency: Some(*thread_creation_idempotency),
+            }),
         rollout_path: Some(rollout_path),
         forked_from_id,
         parent_thread_id,
@@ -435,7 +449,11 @@ fn stored_thread_from_meta_line(
     let rollout_path = codex_rollout::plain_rollout_path(path.as_path());
     StoredThread {
         thread_id: meta_line.meta.id,
-        extra_config: None,
+        extra_config: meta_line.meta.thread_creation_idempotency.clone().map(
+            |thread_creation_idempotency| ExtraConfig {
+                thread_creation_idempotency: Some(*thread_creation_idempotency),
+            },
+        ),
         rollout_path: Some(rollout_path),
         forked_from_id: meta_line.meta.forked_from_id,
         parent_thread_id: meta_line.meta.parent_thread_id,

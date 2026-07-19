@@ -1203,6 +1203,7 @@ async fn submit_user_message_queues_while_compaction_turn_is_running() {
     chat.thread_id = Some(thread_id);
     chat.handle_server_notification(
         ServerNotification::TurnStarted(TurnStartedNotification {
+            client_name: None,
             thread_id: thread_id.to_string(),
             turn: AppServerTurn {
                 id: "turn-1".to_string(),

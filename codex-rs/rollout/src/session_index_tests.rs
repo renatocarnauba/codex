@@ -33,6 +33,7 @@ fn write_rollout_with_metadata(path: &Path, thread_id: ThreadId) -> std::io::Res
                 timestamp,
                 cwd: ".".into(),
                 originator: "test_originator".into(),
+                thread_creation_idempotency: None,
                 cli_version: "test_version".into(),
                 source: SessionSource::Cli,
                 thread_source: None,

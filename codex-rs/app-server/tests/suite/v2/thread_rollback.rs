@@ -155,6 +155,7 @@ async fn thread_rollback_drops_last_turns_and_persists_to_rollout() -> Result<()
     let first_text = "First";
     let turn1_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -177,6 +178,7 @@ async fn thread_rollback_drops_last_turns_and_persists_to_rollout() -> Result<()
 
     let turn2_id = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {

@@ -642,6 +642,12 @@ client_request_definitions! {
         serialization: None,
         response: v2::ThreadLoadedListResponse,
     },
+    #[experimental("server/connection/list")]
+    ServerConnectionList => "server/connection/list" {
+        params: v2::ServerConnectionListParams,
+        serialization: None,
+        response: v2::ServerConnectionListResponse,
+    },
     ThreadRead => "thread/read" {
         params: v2::ThreadReadParams,
         serialization: thread_id(params.thread_id),

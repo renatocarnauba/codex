@@ -117,6 +117,7 @@ async fn thread_start_normalizes_legacy_dynamic_tools_into_model_request() -> Re
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id,
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -426,6 +427,7 @@ async fn dynamic_tool_call_round_trip_sends_text_content_items_to_model() -> Res
     // Start a turn so the tool call is emitted.
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread_id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -636,6 +638,7 @@ async fn start_function_dynamic_tool_call(call_id: &str) -> Result<PendingDynami
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread_id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {

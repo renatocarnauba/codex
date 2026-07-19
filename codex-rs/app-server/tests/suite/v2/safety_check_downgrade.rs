@@ -70,6 +70,7 @@ async fn openai_model_header_mismatch_emits_model_rerouted_notification_v2() -> 
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![UserInput::Text {
@@ -140,6 +141,7 @@ async fn cyber_policy_response_emits_typed_error_notification_v2() -> Result<()>
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![UserInput::Text {
@@ -220,6 +222,7 @@ async fn response_model_field_mismatch_emits_model_rerouted_notification_v2_when
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![UserInput::Text {
@@ -292,6 +295,7 @@ async fn model_verification_emits_typed_notification_and_warning_v2() -> Result<
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![UserInput::Text {
@@ -369,6 +373,7 @@ async fn turn_moderation_metadata_emits_typed_notification_v2() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![UserInput::Text {

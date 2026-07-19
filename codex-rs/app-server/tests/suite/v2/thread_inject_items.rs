@@ -95,6 +95,7 @@ async fn thread_inject_items_adds_raw_response_items_to_thread_history() -> Resu
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -177,6 +178,7 @@ async fn thread_inject_items_adds_raw_response_items_after_a_turn() -> Result<()
 
     let first_turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -224,6 +226,7 @@ async fn thread_inject_items_adds_raw_response_items_after_a_turn() -> Result<()
 
     let second_turn_req = mcp
         .send_turn_start_request(TurnStartParams {
+            idempotency_key: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
