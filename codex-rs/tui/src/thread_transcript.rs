@@ -78,6 +78,7 @@ pub(crate) fn thread_to_transcript_cells(
                 let item = UserMessageItem {
                     id: id.clone(),
                     client_id: client_id.clone(),
+                    client_name: None,
                     content: content
                         .iter()
                         .cloned()

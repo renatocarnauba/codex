@@ -476,6 +476,7 @@ impl ThreadHistoryBuilder {
         self.push_item_in_current_turn(ThreadItem::UserMessage {
             id,
             client_id: payload.client_id.clone(),
+            client_name: payload.client_name.clone(),
             content,
         });
     }
@@ -1640,6 +1641,7 @@ mod tests {
         let events = vec![
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "First turn".into(),
                 images: Some(vec!["https://example.com/one.png".into()]),
                 text_elements: Vec::new(),
@@ -1659,6 +1661,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "Second turn".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -1688,6 +1691,7 @@ mod tests {
             ThreadItem::UserMessage {
                 id: "item-1".into(),
                 client_id: None,
+                client_name: None,
                 content: vec![
                     UserInput::Text {
                         text: "First turn".into(),
@@ -1727,6 +1731,7 @@ mod tests {
             ThreadItem::UserMessage {
                 id: "item-4".into(),
                 client_id: None,
+                client_name: None,
                 content: vec![UserInput::Text {
                     text: "Second turn".into(),
                     text_elements: Vec::new(),
@@ -1859,6 +1864,7 @@ mod tests {
         let events = vec![RolloutItem::EventMsg(EventMsg::UserMessage(
             UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "inspect these".into(),
                 images: Some(vec!["https://example.com/image.png".into()]),
                 image_details: vec![Some(ImageDetail::Original)],
@@ -1876,6 +1882,7 @@ mod tests {
             ThreadItem::UserMessage {
                 id: "item-1".into(),
                 client_id: None,
+                client_name: None,
                 content: vec![
                     UserInput::Text {
                         text: "inspect these".into(),
@@ -1908,6 +1915,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "hello".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -1920,6 +1928,7 @@ mod tests {
                 item: CoreTurnItem::UserMessage(CoreUserMessageItem {
                     id: "user-item-id".to_string(),
                     client_id: None,
+                    client_name: None,
                     content: Vec::new(),
                 }),
                 started_at_ms: 0,
@@ -1947,6 +1956,7 @@ mod tests {
             ThreadItem::UserMessage {
                 id: "item-1".into(),
                 client_id: None,
+                client_name: None,
                 content: vec![UserInput::Text {
                     text: "hello".into(),
                     text_elements: Vec::new(),
@@ -2151,6 +2161,7 @@ mod tests {
                 item: CoreTurnItem::UserMessage(CoreUserMessageItem {
                     id: "user-item-id".to_string(),
                     client_id: Some("client-message-1".to_string()),
+                    client_name: None,
                     content: vec![codex_protocol::user_input::UserInput::Text {
                         text: "hello".into(),
                         text_elements: Vec::new(),
@@ -2160,6 +2171,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: Some("client-message-1".to_string()),
+                client_name: None,
                 message: "hello".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -2188,6 +2200,7 @@ mod tests {
             vec![ThreadItem::UserMessage {
                 id: "item-1".into(),
                 client_id: Some("client-message-1".to_string()),
+                client_name: None,
                 content: vec![UserInput::Text {
                     text: "hello".into(),
                     text_elements: Vec::new(),
@@ -2233,6 +2246,7 @@ mod tests {
             })),
             RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "generate an image".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -2273,6 +2287,7 @@ mod tests {
                     ThreadItem::UserMessage {
                         id: "item-1".into(),
                         client_id: None,
+                        client_name: None,
                         content: vec![UserInput::Text {
                             text: "generate an image".into(),
                             text_elements: Vec::new(),
@@ -2295,6 +2310,7 @@ mod tests {
         let events = vec![
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "Turn start".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -2349,6 +2365,7 @@ mod tests {
         let events = vec![
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "Please do the thing".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -2369,6 +2386,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "Let's try again".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -2397,6 +2415,7 @@ mod tests {
             ThreadItem::UserMessage {
                 id: "item-1".into(),
                 client_id: None,
+                client_name: None,
                 content: vec![UserInput::Text {
                     text: "Please do the thing".into(),
                     text_elements: Vec::new(),
@@ -2421,6 +2440,7 @@ mod tests {
             ThreadItem::UserMessage {
                 id: "item-3".into(),
                 client_id: None,
+                client_name: None,
                 content: vec![UserInput::Text {
                     text: "Let's try again".into(),
                     text_elements: Vec::new(),
@@ -2443,6 +2463,7 @@ mod tests {
         let events = vec![
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "First".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -2456,6 +2477,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "Second".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -2470,6 +2492,7 @@ mod tests {
             EventMsg::ThreadRolledBack(ThreadRolledBackEvent { num_turns: 1 }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "Third".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -2500,6 +2523,7 @@ mod tests {
                 ThreadItem::UserMessage {
                     id: "item-1".into(),
                     client_id: None,
+                    client_name: None,
                     content: vec![UserInput::Text {
                         text: "First".into(),
                         text_elements: Vec::new(),
@@ -2519,6 +2543,7 @@ mod tests {
                 ThreadItem::UserMessage {
                     id: "item-3".into(),
                     client_id: None,
+                    client_name: None,
                     content: vec![UserInput::Text {
                         text: "Third".into(),
                         text_elements: Vec::new(),
@@ -2539,6 +2564,7 @@ mod tests {
         let events = vec![
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "One".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -2552,6 +2578,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "Two".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -2586,6 +2613,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "Start".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -2594,6 +2622,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "Steer".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -2624,6 +2653,7 @@ mod tests {
                 ThreadItem::UserMessage {
                     id: "item-1".into(),
                     client_id: None,
+                    client_name: None,
                     content: vec![UserInput::Text {
                         text: "Start".into(),
                         text_elements: Vec::new(),
@@ -2632,6 +2662,7 @@ mod tests {
                 ThreadItem::UserMessage {
                     id: "item-2".into(),
                     client_id: None,
+                    client_name: None,
                     content: vec![UserInput::Text {
                         text: "Steer".into(),
                         text_elements: Vec::new(),
@@ -2653,6 +2684,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "run tools".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -2859,6 +2891,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "run dynamic tool".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -2943,6 +2976,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "run tools".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -3035,6 +3069,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "review this command".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -3121,6 +3156,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "run a subcommand".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -3187,6 +3223,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "first".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -3211,6 +3248,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "second".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -3289,6 +3327,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "first".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -3313,6 +3352,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "second".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -3365,6 +3405,7 @@ mod tests {
             ThreadItem::UserMessage {
                 id: "item-2".into(),
                 client_id: None,
+                client_name: None,
                 content: vec![UserInput::Text {
                     text: "second".into(),
                     text_elements: Vec::new(),
@@ -3387,6 +3428,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "apply patch".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -3423,6 +3465,7 @@ mod tests {
                 ThreadItem::UserMessage {
                     id: "item-1".into(),
                     client_id: None,
+                    client_name: None,
                     content: vec![UserInput::Text {
                         text: "apply patch".into(),
                         text_elements: Vec::new(),
@@ -3455,6 +3498,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "apply patch".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -3493,6 +3537,7 @@ mod tests {
                 ThreadItem::UserMessage {
                     id: "item-1".into(),
                     client_id: None,
+                    client_name: None,
                     content: vec![UserInput::Text {
                         text: "apply patch".into(),
                         text_elements: Vec::new(),
@@ -3523,6 +3568,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "first".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -3547,6 +3593,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "second".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -3601,6 +3648,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "first".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -3625,6 +3673,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "second".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -3707,6 +3756,7 @@ mod tests {
         let events = vec![
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "resume agent".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -3766,6 +3816,7 @@ mod tests {
         let events = vec![
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "spawn agent".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -3829,6 +3880,7 @@ mod tests {
         let events = vec![
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "redirect".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -3894,6 +3946,7 @@ mod tests {
         let events = vec![
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "hello".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -3933,6 +3986,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "hello".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -3973,6 +4027,7 @@ mod tests {
                 items: vec![ThreadItem::UserMessage {
                     id: "item-1".into(),
                     client_id: None,
+                    client_name: None,
                     content: vec![UserInput::Text {
                         text: "hello".into(),
                         text_elements: Vec::new(),
@@ -3994,6 +4049,7 @@ mod tests {
             }),
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "hello".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -4056,6 +4112,7 @@ mod tests {
             })),
             RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "hello".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -4169,6 +4226,7 @@ mod tests {
         let changes = builder.handle_rollout_item_with_changes(&RolloutItem::EventMsg(
             EventMsg::UserMessage(UserMessageEvent {
                 client_id: Some("client-message-1".into()),
+                client_name: None,
                 message: "hello".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -4184,6 +4242,7 @@ mod tests {
                     item: ThreadItem::UserMessage {
                         id: "item-1".into(),
                         client_id: Some("client-message-1".into()),
+                        client_name: None,
                         content: vec![UserInput::Text {
                             text: "hello".into(),
                             text_elements: Vec::new(),
@@ -4307,6 +4366,7 @@ mod tests {
         builder.handle_rollout_item_with_changes(&RolloutItem::EventMsg(EventMsg::UserMessage(
             UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "hello".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -4440,6 +4500,7 @@ mod tests {
             })),
             RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "hello".into(),
                 images: None,
                 text_elements: Vec::new(),
@@ -4459,5 +4520,72 @@ mod tests {
                 removed_turn_ids: vec!["turn-a".into()],
             }
         );
+    }
+
+    #[test]
+    fn canonical_user_message_client_name_wins_over_orphaned_reservation() {
+        let mut builder = ThreadHistoryBuilder::new();
+        builder.handle_event(&EventMsg::InputAttribution(
+            codex_protocol::protocol::InputAttributionEvent {
+                token: "orphaned-before-crash".into(),
+                cancelled: false,
+                turn_id: "turn-a".into(),
+                client_name: Some("client-a".into()),
+            },
+        ));
+        builder.handle_event(&EventMsg::TurnStarted(TurnStartedEvent {
+            turn_id: "turn-a".into(),
+            trace_id: None,
+            started_at: None,
+            model_context_window: None,
+            collaboration_mode_kind: Default::default(),
+        }));
+        builder.handle_event(&EventMsg::UserMessage(UserMessageEvent {
+            client_name: Some("client-b".into()),
+            message: "after restart".into(),
+            ..Default::default()
+        }));
+
+        let turns = builder.finish();
+        assert!(matches!(
+            turns[0].items.as_slice(),
+            [ThreadItem::UserMessage {
+                client_name: Some(client_name),
+                ..
+            }] if client_name == "client-b"
+        ));
+    }
+
+    #[test]
+    fn missing_canonical_client_name_never_inherits_durable_reservation() {
+        let mut builder = ThreadHistoryBuilder::new();
+        builder.handle_event(&EventMsg::InputAttribution(
+            codex_protocol::protocol::InputAttributionEvent {
+                token: "orphaned-before-crash".into(),
+                cancelled: false,
+                turn_id: "turn-a".into(),
+                client_name: Some("must-not-authenticate".into()),
+            },
+        ));
+        builder.handle_event(&EventMsg::TurnStarted(TurnStartedEvent {
+            turn_id: "turn-a".into(),
+            trace_id: None,
+            started_at: None,
+            model_context_window: None,
+            collaboration_mode_kind: Default::default(),
+        }));
+        builder.handle_event(&EventMsg::UserMessage(UserMessageEvent {
+            message: "legacy core".into(),
+            ..Default::default()
+        }));
+
+        let turns = builder.finish();
+        assert!(matches!(
+            turns[0].items.as_slice(),
+            [ThreadItem::UserMessage {
+                client_name: None,
+                ..
+            }]
+        ));
     }
 }

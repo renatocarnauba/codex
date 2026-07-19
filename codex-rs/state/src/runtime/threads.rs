@@ -1098,6 +1098,12 @@ WHERE assigned_thread_id = ?
         }
         let mut rows_affected = 0;
         for thread_id_string in &thread_id_strings {
+            // Creation keys survive archive/unarchive and are released only by a
+            // definitive hard delete of their owning thread.
+            sqlx::query("DELETE FROM thread_creation_idempotency WHERE thread_id = ?")
+                .bind(thread_id_string)
+                .execute(&mut *tx)
+                .await?;
             rows_affected += sqlx::query("DELETE FROM threads WHERE id = ?")
                 .bind(thread_id_string)
                 .execute(&mut *tx)
@@ -2164,6 +2170,7 @@ mod tests {
         );
         let items = vec![RolloutItem::SessionMeta(SessionMetaLine {
             meta: SessionMeta {
+                thread_creation_idempotency: None,
                 session_id: thread_id.into(),
                 id: thread_id,
                 forked_from_id: None,
@@ -2231,6 +2238,7 @@ mod tests {
         );
         let items = vec![RolloutItem::SessionMeta(SessionMetaLine {
             meta: SessionMeta {
+                thread_creation_idempotency: None,
                 session_id: thread_id.into(),
                 id: thread_id,
                 forked_from_id: None,

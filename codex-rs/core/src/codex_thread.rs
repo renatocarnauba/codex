@@ -249,6 +249,11 @@ impl CodexThread {
     }
 
     #[doc(hidden)]
+    pub async fn try_ensure_rollout_materialized(&self) -> std::io::Result<()> {
+        self.session.try_ensure_rollout_materialized().await
+    }
+
+    #[doc(hidden)]
     pub async fn flush_rollout(&self) -> std::io::Result<()> {
         self.session.flush_rollout().await
     }
@@ -306,6 +311,7 @@ impl CodexThread {
         additional_context: BTreeMap<String, AdditionalContextEntry>,
         expected_turn_id: Option<&str>,
         client_user_message_id: Option<String>,
+        input_client_name: Option<String>,
         responsesapi_client_metadata: Option<HashMap<String, String>>,
     ) -> Result<String, SteerInputError> {
         self.session
@@ -314,6 +320,7 @@ impl CodexThread {
                 additional_context,
                 expected_turn_id,
                 client_user_message_id,
+                input_client_name,
                 responsesapi_client_metadata,
             )
             .await

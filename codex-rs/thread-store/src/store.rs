@@ -102,12 +102,55 @@ pub trait ThreadStore: Any + Send + Sync {
     /// more than one matching thread exists.
     fn find_thread_by_creation_idempotency_key(
         &self,
+        _kind: codex_protocol::protocol::ThreadCreationIdempotencyKind,
         _originator: &str,
         _key: &str,
     ) -> ThreadStoreFuture<'_, Option<StoredThread>> {
         Box::pin(async {
             Err(ThreadStoreError::Unsupported {
                 operation: "find_thread_by_creation_idempotency_key",
+            })
+        })
+    }
+
+    /// Reserve the indexed key for a newly allocated thread before its canonical rollout flush.
+    fn reserve_thread_creation_idempotency(
+        &self,
+        _originator: &str,
+        _idempotency: &codex_protocol::protocol::ThreadCreationIdempotency,
+        _thread_id: codex_protocol::ThreadId,
+    ) -> ThreadStoreFuture<'_, ()> {
+        Box::pin(async {
+            Err(ThreadStoreError::Unsupported {
+                operation: "reserve_thread_creation_idempotency",
+            })
+        })
+    }
+
+    /// Commit an owned reservation only after canonical rollout persistence succeeds.
+    fn commit_thread_creation_idempotency(
+        &self,
+        _originator: &str,
+        _idempotency: &codex_protocol::protocol::ThreadCreationIdempotency,
+        _thread_id: codex_protocol::ThreadId,
+    ) -> ThreadStoreFuture<'_, ()> {
+        Box::pin(async {
+            Err(ThreadStoreError::Unsupported {
+                operation: "commit_thread_creation_idempotency",
+            })
+        })
+    }
+
+    /// Remove an uncommitted reservation after canonical rollout persistence failed.
+    fn remove_thread_creation_idempotency_reservation(
+        &self,
+        _originator: &str,
+        _idempotency: &codex_protocol::protocol::ThreadCreationIdempotency,
+        _thread_id: codex_protocol::ThreadId,
+    ) -> ThreadStoreFuture<'_, ()> {
+        Box::pin(async {
+            Err(ThreadStoreError::Unsupported {
+                operation: "remove_thread_creation_idempotency_reservation",
             })
         })
     }

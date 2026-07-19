@@ -198,6 +198,7 @@ async fn state_db_init_backfills_before_returning() -> anyhow::Result<()> {
             ordinal: None,
             item: RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "hello from startup backfill".to_string(),
                 images: None,
                 local_images: Vec::new(),
@@ -539,6 +540,7 @@ async fn recorder_materializes_on_flush_with_pending_items() -> std::io::Result<
         .record_canonical_items(&[RolloutItem::EventMsg(EventMsg::UserMessage(
             UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "first-user-message".to_string(),
                 images: None,
                 local_images: Vec::new(),

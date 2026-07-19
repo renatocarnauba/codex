@@ -399,6 +399,7 @@ pub(crate) fn tool_runtime_trace_event(event: &EventMsg) -> Option<ToolRuntimeTr
         | EventMsg::RawResponseItem(_)
         | EventMsg::RawResponseCompleted(_)
         | EventMsg::TurnIdempotency(_)
+        | EventMsg::InputAttribution(_)
         | EventMsg::ItemStarted(_)
         | EventMsg::ItemCompleted(_)
         | EventMsg::HookStarted(_)
@@ -424,6 +425,7 @@ pub(crate) fn wrapped_protocol_event_type(event: &EventMsg) -> Option<&'static s
         EventMsg::ShutdownComplete => Some("shutdown_complete"),
         EventMsg::GuardianWarning(_)
         | EventMsg::TurnIdempotency(_)
+        | EventMsg::InputAttribution(_)
         | EventMsg::SafetyBuffering(_)
         | EventMsg::RealtimeConversationStarted(_)
         | EventMsg::RealtimeConversationRealtime(_)

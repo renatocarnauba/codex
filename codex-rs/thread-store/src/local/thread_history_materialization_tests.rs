@@ -57,6 +57,7 @@ async fn paginated_live_append_materializes_turn_items_and_state() {
                     TurnItem::UserMessage(UserMessageItem {
                         id: "user-1".to_string(),
                         client_id: None,
+                        client_name: None,
                         content: Vec::new(),
                     }),
                 ),
@@ -188,6 +189,7 @@ async fn subagent_prefix_advances_projection_without_materializing_history() {
                     TurnItem::UserMessage(UserMessageItem {
                         id: "parent-user".to_string(),
                         client_id: None,
+                        client_name: None,
                         content: Vec::new(),
                     }),
                 ),
@@ -199,6 +201,7 @@ async fn subagent_prefix_advances_projection_without_materializing_history() {
                     TurnItem::UserMessage(UserMessageItem {
                         id: "child-user".to_string(),
                         client_id: None,
+                        client_name: None,
                         content: Vec::new(),
                     }),
                 ),
@@ -248,6 +251,7 @@ async fn replayed_item_snapshot_updates_content_without_reordering() {
                     TurnItem::UserMessage(UserMessageItem {
                         id: "user-1".to_string(),
                         client_id: None,
+                        client_name: None,
                         content: Vec::new(),
                     }),
                 ),
@@ -276,6 +280,7 @@ async fn replayed_item_snapshot_updates_content_without_reordering() {
                 TurnItem::UserMessage(UserMessageItem {
                     id: "user-1".to_string(),
                     client_id: Some("updated".to_string()),
+                    client_name: None,
                     content: Vec::new(),
                 }),
             )],
@@ -303,6 +308,7 @@ WHERE thread_id = ? AND turn_id = ? AND item_id = ?
         ThreadItem::UserMessage {
             id: "user-1".to_string(),
             client_id: Some("updated".to_string()),
+            client_name: None,
             content: Vec::new(),
         }
     );
@@ -347,6 +353,7 @@ async fn summary_items_use_final_answers_and_ignore_commentary() {
                     TurnItem::UserMessage(UserMessageItem {
                         id: "user-1".to_string(),
                         client_id: None,
+                        client_name: None,
                         content: Vec::new(),
                     }),
                 ),
@@ -382,6 +389,7 @@ async fn summary_items_use_final_answers_and_ignore_commentary() {
                     TurnItem::UserMessage(UserMessageItem {
                         id: "user-2".to_string(),
                         client_id: None,
+                        client_name: None,
                         content: Vec::new(),
                     }),
                 ),
@@ -480,6 +488,7 @@ WHERE thread_id = ?
                 TurnItem::UserMessage(UserMessageItem {
                     id: "user-1".to_string(),
                     client_id: None,
+                    client_name: None,
                     content: Vec::new(),
                 }),
             )],
@@ -575,6 +584,7 @@ async fn catch_up_leaves_trailing_partial_line_unprojected() {
             TurnItem::UserMessage(UserMessageItem {
                 id: "user-1".to_string(),
                 client_id: None,
+                client_name: None,
                 content: Vec::new(),
             }),
         ),

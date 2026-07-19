@@ -178,7 +178,10 @@ pub(crate) async fn apply_bespoke_event_handling(
             let notification = TurnStartedNotification {
                 thread_id: conversation_id.to_string(),
                 turn,
-                client_name: conversation.config_snapshot().await.app_server_client_name,
+                client_name: thread_state
+                    .lock()
+                    .await
+                    .turn_client_name(payload.turn_id.as_str()),
             };
             outgoing
                 .send_server_notification(ServerNotification::TurnStarted(notification))
@@ -194,12 +197,16 @@ pub(crate) async fn apply_bespoke_event_handling(
                 .await;
             handle_turn_complete(
                 conversation_id,
-                event_turn_id,
+                event_turn_id.clone(),
                 turn_complete_event,
                 &outgoing,
                 &thread_state,
             )
             .await;
+            thread_state
+                .lock()
+                .await
+                .remove_turn_client_name(event_turn_id.as_str());
         }
         EventMsg::McpStartupUpdate(update) => {
             let (status, error, failure_reason) = match update.status {
@@ -962,6 +969,11 @@ pub(crate) async fn apply_bespoke_event_handling(
         }
         EventMsg::ViewImageToolCall(_) => {}
         EventMsg::ItemStarted(event) => {
+            let input_client_name = match &event.item {
+                CoreTurnItem::UserMessage(item) => item.client_name.clone(),
+                _ => None,
+            };
+            let is_user_message = matches!(&event.item, CoreTurnItem::UserMessage(_));
             let should_emit = match &event.item {
                 // Approval and guardian flows can emit the command start notification before core
                 // emits the canonical item. Reuse the same set to suppress that duplicate.
@@ -991,8 +1003,14 @@ pub(crate) async fn apply_bespoke_event_handling(
                     &event_turn_id,
                 );
                 if let ServerNotification::ItemStarted(params) = &mut notification {
-                    params.client_name =
-                        conversation.config_snapshot().await.app_server_client_name;
+                    params.client_name = if is_user_message {
+                        input_client_name.clone()
+                    } else {
+                        thread_state
+                            .lock()
+                            .await
+                            .turn_client_name(params.turn_id.as_str())
+                    };
                 }
                 outgoing.send_server_notification(notification).await;
             }
@@ -2107,6 +2125,7 @@ mod tests {
     use codex_protocol::items::DynamicToolCallStatus as CoreDynamicToolCallStatus;
     use codex_protocol::items::SubAgentActivityItem;
     use codex_protocol::items::TurnItem as CoreTurnItem;
+    use codex_protocol::items::UserMessageItem;
     use codex_protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
     use codex_protocol::models::NetworkPermissions as CoreNetworkPermissions;
     use codex_protocol::models::PermissionProfile;
@@ -2131,6 +2150,7 @@ mod tests {
     use codex_protocol::protocol::TokenUsage;
     use codex_protocol::protocol::TokenUsageInfo;
     use codex_protocol::protocol::UserMessageEvent;
+    use codex_protocol::user_input::UserInput as CoreUserInput;
     use codex_thread_store::StoredThread;
     use codex_thread_store::StoredThreadHistory;
     use codex_utils_absolute_path::AbsolutePathBuf;
@@ -2180,6 +2200,7 @@ mod tests {
         let history_items = vec![
             RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "before rollback".to_string(),
                 images: None,
                 local_images: Vec::new(),
@@ -3263,6 +3284,7 @@ mod tests {
                 "turn-1",
                 &EventMsg::UserMessage(codex_protocol::protocol::UserMessageEvent {
                     client_id: None,
+                    client_name: None,
                     message: "already tracked".to_string(),
                     images: None,
                     local_images: Vec::new(),
@@ -3282,7 +3304,6 @@ mod tests {
             vec![ConnectionId(1)],
             conversation_id,
         );
-
         apply_bespoke_event_handling(
             Event {
                 id: "turn-1".to_string(),
@@ -3295,8 +3316,8 @@ mod tests {
                 }),
             },
             conversation_id,
-            conversation,
-            thread_manager,
+            conversation.clone(),
+            thread_manager.clone(),
             ThreadStateManager::new(),
             outgoing,
             thread_state,
@@ -3406,6 +3427,127 @@ mod tests {
                 completed_at_ms: 42,
             }
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn canonical_user_item_start_uses_only_item_client_name() -> Result<()> {
+        let codex_home = TempDir::new()?;
+        let config = load_default_config_for_test(&codex_home).await;
+        let thread_manager = Arc::new(
+            codex_core::test_support::thread_manager_with_models_provider_and_home(
+                CodexAuth::create_dummy_chatgpt_auth_for_testing(),
+                config.model_provider.clone(),
+                config.codex_home.to_path_buf(),
+                Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+            ),
+        );
+        let codex_core::NewThread {
+            thread_id: conversation_id,
+            thread: conversation,
+            ..
+        } = thread_manager.start_thread(config).await?;
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let outgoing = Arc::new(OutgoingMessageSender::new(
+            tx,
+            codex_analytics::AnalyticsEventsClient::disabled(),
+        ));
+        let outgoing = ThreadScopedOutgoingMessageSender::new(
+            outgoing,
+            vec![ConnectionId(1)],
+            conversation_id,
+        );
+        let thread_state = new_thread_state();
+        thread_state
+            .lock()
+            .await
+            .record_turn_client_name("turn-1".to_string(), Some("belie_manager".to_string()));
+
+        apply_bespoke_event_handling(
+            Event {
+                id: "turn-1".to_string(),
+                msg: EventMsg::ItemStarted(ItemStartedEvent {
+                    thread_id: conversation_id,
+                    turn_id: "turn-1".to_string(),
+                    item: CoreTurnItem::UserMessage(UserMessageItem {
+                        id: "user-1".to_string(),
+                        client_id: None,
+                        client_name: Some("Codex Desktop".to_string()),
+                        content: vec![CoreUserInput::Text {
+                            text: "steer".to_string(),
+                            text_elements: Vec::new(),
+                        }],
+                    }),
+                    started_at_ms: 42,
+                }),
+            },
+            conversation_id,
+            conversation.clone(),
+            thread_manager.clone(),
+            ThreadStateManager::new(),
+            outgoing.clone(),
+            thread_state.clone(),
+            ThreadWatchManager::new(),
+            Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
+            "test-provider".to_string(),
+        )
+        .await;
+
+        let notification = recv_broadcast_notification(&mut rx).await?;
+        let ServerNotification::ItemStarted(payload) = notification else {
+            bail!("unexpected message: {notification:?}");
+        };
+        assert_eq!(payload.client_name.as_deref(), Some("Codex Desktop"));
+        assert!(matches!(
+            payload.item,
+            ThreadItem::UserMessage {
+                client_name: Some(client_name),
+                ..
+            } if client_name == "Codex Desktop"
+        ));
+
+        apply_bespoke_event_handling(
+            Event {
+                id: "turn-1".to_string(),
+                msg: EventMsg::ItemStarted(ItemStartedEvent {
+                    thread_id: conversation_id,
+                    turn_id: "turn-1".to_string(),
+                    item: CoreTurnItem::UserMessage(UserMessageItem {
+                        id: "user-2".to_string(),
+                        client_id: None,
+                        client_name: None,
+                        content: vec![CoreUserInput::Text {
+                            text: "legacy".to_string(),
+                            text_elements: Vec::new(),
+                        }],
+                    }),
+                    started_at_ms: 43,
+                }),
+            },
+            conversation_id,
+            conversation,
+            thread_manager,
+            ThreadStateManager::new(),
+            outgoing,
+            thread_state,
+            ThreadWatchManager::new(),
+            Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
+            "test-provider".to_string(),
+        )
+        .await;
+
+        let notification = recv_broadcast_notification(&mut rx).await?;
+        let ServerNotification::ItemStarted(payload) = notification else {
+            bail!("unexpected message: {notification:?}");
+        };
+        assert_eq!(payload.client_name, None);
+        assert!(matches!(
+            payload.item,
+            ThreadItem::UserMessage {
+                client_name: None,
+                ..
+            }
+        ));
         Ok(())
     }
 

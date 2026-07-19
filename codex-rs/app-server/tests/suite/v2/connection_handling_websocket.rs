@@ -21,6 +21,7 @@ use codex_app_server_protocol::JSONRPCNotification;
 use codex_app_server_protocol::JSONRPCRequest;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
+use codex_app_server_protocol::SandboxPolicy;
 use codex_app_server_protocol::ServerConnectionListResponse;
 use codex_app_server_protocol::ThreadForkResponse;
 use codex_app_server_protocol::ThreadListResponse;
@@ -206,6 +207,172 @@ async fn websocket_shared_server_preserves_connection_originators_per_thread_and
     Ok(())
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn websocket_turn_notifications_keep_winner_client_after_losing_start_and_steer_requests()
+-> Result<()> {
+    let workdir = TempDir::new()?;
+    let server = create_mock_responses_server_sequence_unchecked(vec![
+        create_shell_command_sse_response(
+            vec!["sleep".to_string(), "1".to_string()],
+            Some(workdir.path()),
+            Some(10_000),
+            "call_origin_race_sleep",
+        )?,
+        create_final_assistant_message_sse_response("winner done")?,
+    ])
+    .await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri(), "never")?;
+    let (mut process, bind_addr) = spawn_websocket_server(codex_home.path()).await?;
+    let mut manager = connect_websocket(bind_addr).await?;
+    let mut desktop = connect_websocket(bind_addr).await?;
+    send_initialize_request_with_experimental_api(&mut manager, 1, "belie_manager").await?;
+    read_response_for_id(&mut manager, 1)
+        .await
+        .context("manager initialize response")?;
+    send_initialize_request_with_experimental_api(&mut desktop, 2, "Codex Desktop").await?;
+    read_response_for_id(&mut desktop, 2)
+        .await
+        .context("desktop initialize response")?;
+    let thread_id = start_thread(&mut manager, 3)
+        .await
+        .context("manager thread/start response")?;
+
+    send_request(
+        &mut manager,
+        "turn/start",
+        4,
+        Some(serde_json::to_value(TurnStartParams {
+            thread_id: thread_id.clone(),
+            input: vec![UserInput::Text {
+                text: "run the winner".to_string(),
+                text_elements: Vec::new(),
+            }],
+            cwd: Some(workdir.path().to_path_buf()),
+            ..Default::default()
+        })?),
+    )
+    .await?;
+    let (response, started_notification) =
+        read_response_and_notification_for_method(&mut manager, 4, "turn/started")
+            .await
+            .context("manager winning turn/start response and notification")?;
+    let started: TurnStartResponse = to_response(response)?;
+    let started_params: TurnStartedNotification =
+        serde_json::from_value(started_notification.params.context("turn/started params")?)?;
+    assert_eq!(started_params.client_name.as_deref(), Some("belie_manager"));
+
+    // A losing second start and an accepted Desktop steer both used to overwrite
+    // the thread-global client name while the Manager turn was still emitting.
+    send_request(
+        &mut desktop,
+        "turn/start",
+        5,
+        Some(serde_json::to_value(TurnStartParams {
+            thread_id: thread_id.clone(),
+            input: vec![UserInput::Text {
+                text: "must lose".to_string(),
+                text_elements: Vec::new(),
+            }],
+            sandbox_policy: Some(SandboxPolicy::DangerFullAccess),
+            permissions: Some(":workspace".to_string()),
+            ..Default::default()
+        })?),
+    )
+    .await?;
+    let _ = read_error_for_id(&mut desktop, 5)
+        .await
+        .context("desktop losing turn/start error")?;
+    send_request(
+        &mut desktop,
+        "turn/steer",
+        6,
+        Some(serde_json::to_value(TurnSteerParams {
+            thread_id: thread_id.clone(),
+            expected_turn_id: started.turn.id.clone(),
+            input: vec![UserInput::Text {
+                text: "desktop accepted steer".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })?),
+    )
+    .await?;
+    let _: TurnSteerResponse = to_response(
+        read_response_for_id(&mut desktop, 6)
+            .await
+            .context("desktop accepted turn/steer response")?,
+    )?;
+    sleep(Duration::from_secs(3)).await;
+    process.kill().await.context("kill original app-server")?;
+
+    let (mut restarted_process, restarted_bind_addr) =
+        spawn_websocket_server(codex_home.path()).await?;
+    let mut restarted_reader = connect_websocket(restarted_bind_addr).await?;
+    send_initialize_request_with_experimental_api(&mut restarted_reader, 9, "belie_manager")
+        .await?;
+    read_response_for_id(&mut restarted_reader, 9)
+        .await
+        .context("restarted initialize response")?;
+    send_request(
+        &mut restarted_reader,
+        "thread/resume",
+        10,
+        Some(json!({"threadId": thread_id})),
+    )
+    .await?;
+    let ThreadResumeResponse {
+        thread: resumed_thread,
+        ..
+    } = to_response(
+        read_response_for_id(&mut restarted_reader, 10)
+            .await
+            .context("restarted thread/resume response")?,
+    )?;
+    let resumed_clients = resumed_thread
+        .turns
+        .iter()
+        .flat_map(|turn| turn.items.iter())
+        .filter_map(|item| match item {
+            codex_app_server_protocol::ThreadItem::UserMessage { client_name, .. } => {
+                client_name.as_deref()
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(resumed_clients, vec!["belie_manager", "Codex Desktop"]);
+
+    send_request(
+        &mut restarted_reader,
+        "thread/read",
+        11,
+        Some(json!({"threadId": thread_id, "includeTurns": true})),
+    )
+    .await?;
+    let ThreadReadResponse {
+        thread: restarted_thread,
+    } = to_response(
+        read_response_for_id(&mut restarted_reader, 11)
+            .await
+            .context("restarted thread/read response")?,
+    )?;
+    let restarted_clients = restarted_thread
+        .turns
+        .iter()
+        .flat_map(|turn| turn.items.iter())
+        .filter_map(|item| match item {
+            codex_app_server_protocol::ThreadItem::UserMessage { client_name, .. } => {
+                client_name.as_deref()
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(restarted_clients, vec!["belie_manager", "Codex Desktop"]);
+    restarted_process.kill().await?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn websocket_thread_originator_survives_restart_and_all_thread_reads() -> Result<()> {
     let server = create_mock_responses_server_sequence_unchecked(vec![
@@ -360,6 +527,27 @@ async fn websocket_thread_start_idempotency_survives_restart_archive_and_origin_
         to_response(read_response_for_id(&mut reconnected_manager, 4).await?)?;
     assert_eq!(retried.thread.id, first.thread.id);
     assert_eq!(retried.thread.originator.as_deref(), Some("belie_manager"));
+
+    // Operation kind is payload, not namespace: the same key cannot be reused
+    // for a fork even though the original binding came from thread/start.
+    send_request(
+        &mut reconnected_manager,
+        "thread/fork",
+        /*id*/ 40,
+        Some(json!({
+            "threadId": first.thread.id,
+            "excludeTurns": true,
+            "idempotencyKey": key
+        })),
+    )
+    .await?;
+    let cross_operation_conflict = read_error_for_id(&mut reconnected_manager, /*id*/ 40).await?;
+    assert!(
+        cross_operation_conflict
+            .error
+            .message
+            .contains("already bound")
+    );
 
     // Reconciliation may archive the just-created task before the manager can bind it. The key
     // remains global: retry unarchives and resumes the same durable thread instead of duplicating.
@@ -2145,10 +2333,12 @@ pub(super) async fn read_error_for_id(stream: &mut WsClient, id: i64) -> Result<
     let target_id = RequestId::Integer(id);
     loop {
         let message = read_jsonrpc_message(stream).await?;
-        if let JSONRPCMessage::Error(err) = message
-            && err.id == target_id
-        {
-            return Ok(err);
+        match message {
+            JSONRPCMessage::Error(err) if err.id == target_id => return Ok(err),
+            JSONRPCMessage::Response(response) if response.id == target_id => {
+                bail!("request {id} unexpectedly succeeded while waiting for an error")
+            }
+            _ => {}
         }
     }
 }

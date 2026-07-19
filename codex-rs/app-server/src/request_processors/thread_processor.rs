@@ -94,6 +94,21 @@ fn resume_params_from_idempotent_fork(
     }
 }
 
+async fn discard_failed_thread_creation(
+    thread_manager: &ThreadManager,
+    thread_id: ThreadId,
+    thread: &CodexThread,
+) {
+    // Remove visibility first, then discard the lazy recorder before Shutdown
+    // can materialize a rollout for a creation that never won its reservation.
+    thread_manager.remove_thread(&thread_id).await;
+    let _ = thread_manager
+        .thread_store()
+        .discard_thread(thread_id)
+        .await;
+    let _ = thread.shutdown_and_wait().await;
+}
+
 fn collect_resume_override_mismatches(
     request: &ThreadResumeParams,
     config_snapshot: &ThreadConfigSnapshot,
@@ -464,7 +479,30 @@ pub(crate) struct ThreadRequestProcessor {
     pub(super) background_tasks: TaskTracker,
     pub(super) skills_watcher: Arc<SkillsWatcher>,
     pub(super) initial_config_warnings: Arc<Vec<ConfigWarningNotification>>,
-    pub(super) thread_creation_idempotency_lock: Arc<Mutex<()>>,
+    pub(super) thread_creation_idempotency_locks: Arc<ThreadCreationIdempotencyLocks>,
+}
+
+#[derive(Default)]
+pub(super) struct ThreadCreationIdempotencyLocks {
+    by_key: Mutex<HashMap<(String, String), std::sync::Weak<Mutex<()>>>>,
+}
+
+impl ThreadCreationIdempotencyLocks {
+    async fn lock(&self, originator: &str, key: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let lock = {
+            let mut by_key = self.by_key.lock().await;
+            by_key.retain(|_, lock| lock.strong_count() > 0);
+            let lock_key = (originator.to_string(), key.to_string());
+            if let Some(lock) = by_key.get(&lock_key).and_then(std::sync::Weak::upgrade) {
+                lock
+            } else {
+                let lock = Arc::new(Mutex::new(()));
+                by_key.insert(lock_key, Arc::downgrade(&lock));
+                lock
+            }
+        };
+        lock.lock_owned().await
+    }
 }
 
 /// Outcome of trying to satisfy a resume request from an already loaded thread.
@@ -516,7 +554,7 @@ impl ThreadRequestProcessor {
             background_tasks: TaskTracker::new(),
             skills_watcher,
             initial_config_warnings: Arc::new(initial_config_warnings),
-            thread_creation_idempotency_lock: Arc::new(Mutex::new(())),
+            thread_creation_idempotency_locks: Arc::new(ThreadCreationIdempotencyLocks::default()),
         }
     }
 
@@ -1042,83 +1080,86 @@ impl ThreadRequestProcessor {
         supports_openai_form_elicitation: bool,
         request_context: RequestContext,
     ) -> Result<(), JSONRPCErrorError> {
-        let (thread_start_idempotency, thread_start_idempotency_guard) = if let Some(key) =
-            params.idempotency_key.as_deref()
-        {
-            validate_thread_creation_idempotency_key(key)?;
-            if params.ephemeral == Some(true) {
-                return Err(invalid_request(
-                    "idempotencyKey cannot be combined with ephemeral threads",
-                ));
-            }
-
-            let identity = ThreadCreationIdempotency {
-                key: key.to_string(),
-                kind: ThreadCreationIdempotencyKind::Start,
-                requested_cwd: params.cwd.clone(),
-                thread_source: params.thread_source.clone().map(Into::into),
-                service_name: params.service_name.clone(),
-                source_thread_id: None,
-                last_turn_id: None,
-                before_turn_id: None,
-            };
-            // Serialize lookup + creation and retain the guard until the rollout metadata is
-            // durable. This closes both concurrent retries and the lost-response crash window.
-            let guard = Arc::clone(&self.thread_creation_idempotency_lock)
-                .lock_owned()
-                .await;
-            let effective_originator = self.thread_manager.effective_new_thread_originator(
-                params.service_name.as_deref(),
-                app_server_client_name.clone(),
-            );
-            let existing_thread = self
-                .thread_store
-                .find_thread_by_creation_idempotency_key(&effective_originator, key)
-                .await
-                .map_err(|err| {
-                    internal_error(format!(
-                        "failed to resolve thread/start idempotency key: {err}"
-                    ))
-                })?;
-
-            if let Some(existing_thread) = existing_thread {
-                let existing_identity = existing_thread
-                    .extra_config
-                    .as_ref()
-                    .and_then(|extra| extra.thread_creation_idempotency.as_ref());
-                if existing_identity != Some(&identity) {
-                    return Err(invalid_request(format!(
-                        "idempotencyKey is already bound to thread {} with different cwd, threadSource, or serviceName",
-                        existing_thread.thread_id
-                    )));
+        let (thread_start_idempotency, thread_start_idempotency_guard, idempotency_originator) =
+            if let Some(key) = params.idempotency_key.as_deref() {
+                validate_thread_creation_idempotency_key(key)?;
+                if params.ephemeral == Some(true) {
+                    return Err(invalid_request(
+                        "idempotencyKey cannot be combined with ephemeral threads",
+                    ));
                 }
-                if existing_thread.archived_at.is_some() {
-                    let (_, notification) = self
-                        .thread_unarchive_inner(ThreadUnarchiveParams {
-                            thread_id: existing_thread.thread_id.to_string(),
-                        })
-                        .await?;
-                    self.outgoing
-                        .send_server_notification(ServerNotification::ThreadUnarchived(
-                            notification,
+
+                let identity = ThreadCreationIdempotency {
+                    key: key.to_string(),
+                    kind: ThreadCreationIdempotencyKind::Start,
+                    requested_cwd: params.cwd.clone(),
+                    thread_source: params.thread_source.clone().map(Into::into),
+                    service_name: params.service_name.clone(),
+                    source_thread_id: None,
+                    last_turn_id: None,
+                    before_turn_id: None,
+                };
+                let effective_originator = self.thread_manager.effective_new_thread_originator(
+                    params.service_name.as_deref(),
+                    app_server_client_name.clone(),
+                );
+                // Serialize only this contract key through the durable flush barrier.
+                let guard = self
+                    .thread_creation_idempotency_locks
+                    .lock(effective_originator.as_str(), key)
+                    .await;
+                let existing_thread = self
+                    .thread_store
+                    .find_thread_by_creation_idempotency_key(
+                        ThreadCreationIdempotencyKind::Start,
+                        &effective_originator,
+                        key,
+                    )
+                    .await
+                    .map_err(|err| {
+                        internal_error(format!(
+                            "failed to resolve thread/start idempotency key: {err}"
                         ))
-                        .await;
+                    })?;
+
+                if let Some(existing_thread) = existing_thread {
+                    let existing_identity = existing_thread
+                        .extra_config
+                        .as_ref()
+                        .and_then(|extra| extra.thread_creation_idempotency.as_ref());
+                    if existing_identity != Some(&identity) {
+                        return Err(invalid_request(format!(
+                            "idempotencyKey is already bound to thread {} with different cwd, threadSource, or serviceName",
+                            existing_thread.thread_id
+                        )));
+                    }
+                    if existing_thread.archived_at.is_some() {
+                        let (_, notification) = self
+                            .thread_unarchive_inner(ThreadUnarchiveParams {
+                                thread_id: existing_thread.thread_id.to_string(),
+                            })
+                            .await?;
+                        self.outgoing
+                            .send_server_notification(ServerNotification::ThreadUnarchived(
+                                notification,
+                            ))
+                            .await;
+                    }
+                    self.thread_resume_inner(
+                        request_id,
+                        resume_params_from_idempotent_start(existing_thread.thread_id, &params),
+                        app_server_client_name,
+                        app_server_client_version,
+                        supports_openai_form_elicitation,
+                    )
+                    .await?;
+                    drop(guard);
+                    return Ok(());
                 }
-                self.thread_resume_inner(
-                    request_id,
-                    resume_params_from_idempotent_start(existing_thread.thread_id, &params),
-                    app_server_client_name,
-                    app_server_client_version,
-                    supports_openai_form_elicitation,
-                )
-                .await?;
-                drop(guard);
-                return Ok(());
-            }
-            (Some(identity), Some(guard))
-        } else {
-            (None, None)
-        };
+                (Some(identity), Some(guard), Some(effective_originator))
+            } else {
+                (None, None, None)
+            };
 
         let ThreadStartParams {
             model,
@@ -1219,6 +1260,7 @@ impl ThreadRequestProcessor {
                 initial_config_warnings,
                 thread_start_idempotency,
                 thread_start_idempotency_guard,
+                idempotency_originator,
             )
             .await
             {
@@ -1297,7 +1339,8 @@ impl ThreadRequestProcessor {
         request_trace: Option<W3cTraceContext>,
         initial_config_warnings: Arc<Vec<ConfigWarningNotification>>,
         thread_start_idempotency: Option<ThreadCreationIdempotency>,
-        _thread_start_idempotency_guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+        thread_start_idempotency_guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+        idempotency_originator: Option<String>,
     ) -> Result<(), JSONRPCErrorError> {
         let thread_start_started_at = std::time::Instant::now();
         let requested_cwd = typesafe_overrides.cwd.clone();
@@ -1452,14 +1495,89 @@ impl ThreadRequestProcessor {
                 CodexErr::UnsupportedOperation(message) => method_not_found(message),
                 err => internal_error(format!("error creating thread: {err}")),
             })?;
-        if thread_start_idempotency.is_some() {
-            thread.ensure_rollout_materialized().await;
-            thread.flush_rollout().await.map_err(|err| {
-                internal_error(format!(
+        if let (Some(idempotency), Some(originator)) = (
+            thread_start_idempotency.as_ref(),
+            idempotency_originator.as_deref(),
+        ) {
+            if thread.rollout_path().is_none() {
+                discard_failed_thread_creation(
+                    listener_task_context.thread_manager.as_ref(),
+                    thread_id,
+                    thread.as_ref(),
+                )
+                .await;
+                return Err(internal_error(
+                    "durable thread/start did not allocate a rollout path",
+                ));
+            }
+            if let Err(err) = listener_task_context
+                .thread_manager
+                .thread_store()
+                .reserve_thread_creation_idempotency(originator, idempotency, thread_id)
+                .await
+            {
+                discard_failed_thread_creation(
+                    listener_task_context.thread_manager.as_ref(),
+                    thread_id,
+                    thread.as_ref(),
+                )
+                .await;
+                return Err(internal_error(format!(
+                    "failed to reserve durable thread/start idempotency key: {err}"
+                )));
+            }
+            if let Err(err) = thread.try_ensure_rollout_materialized().await {
+                let _ = listener_task_context
+                    .thread_manager
+                    .thread_store()
+                    .remove_thread_creation_idempotency_reservation(
+                        originator,
+                        idempotency,
+                        thread_id,
+                    )
+                    .await;
+                discard_failed_thread_creation(
+                    listener_task_context.thread_manager.as_ref(),
+                    thread_id,
+                    thread.as_ref(),
+                )
+                .await;
+                return Err(internal_error(format!(
+                    "failed to materialize durable thread/start idempotency key: {err}"
+                )));
+            }
+            if let Err(err) = thread.flush_rollout().await {
+                let _ = listener_task_context
+                    .thread_manager
+                    .thread_store()
+                    .remove_thread_creation_idempotency_reservation(
+                        originator,
+                        idempotency,
+                        thread_id,
+                    )
+                    .await;
+                discard_failed_thread_creation(
+                    listener_task_context.thread_manager.as_ref(),
+                    thread_id,
+                    thread.as_ref(),
+                )
+                .await;
+                return Err(internal_error(format!(
                     "failed to durably persist thread/start idempotency key: {err}"
-                ))
-            })?;
+                )));
+            }
+            listener_task_context
+                .thread_manager
+                .thread_store()
+                .commit_thread_creation_idempotency(originator, idempotency, thread_id)
+                .await
+                .map_err(|err| {
+                    internal_error(format!(
+                        "failed to commit durable thread/start idempotency key: {err}"
+                    ))
+                })?;
         }
+        drop(thread_start_idempotency_guard);
         let session_telemetry = thread.session_telemetry();
         session_telemetry.record_startup_phase(
             "thread_start_create_thread",
@@ -1670,11 +1788,32 @@ impl ThreadRequestProcessor {
                     }
                 }
                 Err(err) => {
-                    warn!(
-                        "failed to read spawned descendant thread {descendant_thread_id} while archiving {thread_id}: {err}"
-                    );
+                    return Err(thread_store_archive_error("archive", err));
                 }
             }
+        }
+
+        let loaded_statuses = self
+            .thread_watch_manager
+            .loaded_statuses_for_threads(
+                archive_thread_ids.iter().map(ToString::to_string).collect(),
+            )
+            .await;
+        let active_thread_ids = archive_thread_ids
+            .iter()
+            .filter(|candidate| {
+                matches!(
+                    loaded_statuses.get(&candidate.to_string()),
+                    Some(ThreadStatus::Active { .. })
+                )
+            })
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        if !active_thread_ids.is_empty() {
+            return Err(invalid_request(format!(
+                "cannot archive thread tree while active turns exist: {}",
+                active_thread_ids.join(", ")
+            )));
         }
 
         let mut archived_thread_ids = Vec::new();
@@ -4230,9 +4369,11 @@ impl ThreadRequestProcessor {
             ));
         }
 
-        let (thread_creation_idempotency, _thread_creation_idempotency_guard) = if let Some(key) =
-            idempotency_key.as_deref()
-        {
+        let (
+            thread_creation_idempotency,
+            thread_creation_idempotency_guard,
+            idempotency_originator,
+        ) = if let Some(key) = idempotency_key.as_deref() {
             validate_thread_creation_idempotency_key(key)?;
             let effective_originator = self.thread_manager.effective_new_thread_originator(
                 service_name.as_deref(),
@@ -4258,12 +4399,17 @@ impl ThreadRequestProcessor {
                 last_turn_id: last_turn_id.clone(),
                 before_turn_id: before_turn_id.clone(),
             };
-            let guard = Arc::clone(&self.thread_creation_idempotency_lock)
-                .lock_owned()
+            let guard = self
+                .thread_creation_idempotency_locks
+                .lock(effective_originator.as_str(), key)
                 .await;
             let existing_thread = self
                 .thread_store
-                .find_thread_by_creation_idempotency_key(&effective_originator, key)
+                .find_thread_by_creation_idempotency_key(
+                    ThreadCreationIdempotencyKind::Fork,
+                    &effective_originator,
+                    key,
+                )
                 .await
                 .map_err(|err| {
                     internal_error(format!(
@@ -4304,9 +4450,9 @@ impl ThreadRequestProcessor {
                 drop(guard);
                 return Ok(());
             }
-            (Some(identity), Some(guard))
+            (Some(identity), Some(guard), Some(effective_originator))
         } else {
-            (None, None)
+            (None, None, None)
         };
         let mut source_thread = self
             .read_stored_thread_for_resume(&thread_id, path.as_ref(), /*include_history*/ true)
@@ -4420,14 +4566,84 @@ impl ThreadRequestProcessor {
                 CodexErr::InvalidRequest(message) => invalid_request(message),
                 err => internal_error(format!("error forking thread: {err}")),
             })?;
-        if thread_creation_idempotency.is_some() {
-            forked_thread.ensure_rollout_materialized().await;
-            forked_thread.flush_rollout().await.map_err(|err| {
-                internal_error(format!(
+        if let (Some(idempotency), Some(originator)) = (
+            thread_creation_idempotency.as_ref(),
+            idempotency_originator.as_deref(),
+        ) {
+            if forked_thread.rollout_path().is_none() {
+                discard_failed_thread_creation(
+                    self.thread_manager.as_ref(),
+                    thread_id,
+                    forked_thread.as_ref(),
+                )
+                .await;
+                return Err(internal_error(
+                    "durable thread/fork did not allocate a rollout path",
+                ));
+            }
+            if let Err(err) = self
+                .thread_store
+                .reserve_thread_creation_idempotency(originator, idempotency, thread_id)
+                .await
+            {
+                discard_failed_thread_creation(
+                    self.thread_manager.as_ref(),
+                    thread_id,
+                    forked_thread.as_ref(),
+                )
+                .await;
+                return Err(internal_error(format!(
+                    "failed to reserve durable thread/fork idempotency key: {err}"
+                )));
+            }
+            if let Err(err) = forked_thread.try_ensure_rollout_materialized().await {
+                let _ = self
+                    .thread_store
+                    .remove_thread_creation_idempotency_reservation(
+                        originator,
+                        idempotency,
+                        thread_id,
+                    )
+                    .await;
+                discard_failed_thread_creation(
+                    self.thread_manager.as_ref(),
+                    thread_id,
+                    forked_thread.as_ref(),
+                )
+                .await;
+                return Err(internal_error(format!(
+                    "failed to materialize durable thread/fork idempotency key: {err}"
+                )));
+            }
+            if let Err(err) = forked_thread.flush_rollout().await {
+                let _ = self
+                    .thread_store
+                    .remove_thread_creation_idempotency_reservation(
+                        originator,
+                        idempotency,
+                        thread_id,
+                    )
+                    .await;
+                discard_failed_thread_creation(
+                    self.thread_manager.as_ref(),
+                    thread_id,
+                    forked_thread.as_ref(),
+                )
+                .await;
+                return Err(internal_error(format!(
                     "failed to durably persist thread/fork idempotency key: {err}"
-                ))
-            })?;
+                )));
+            }
+            self.thread_store
+                .commit_thread_creation_idempotency(originator, idempotency, thread_id)
+                .await
+                .map_err(|err| {
+                    internal_error(format!(
+                        "failed to commit durable thread/fork idempotency key: {err}"
+                    ))
+                })?;
         }
+        drop(thread_creation_idempotency_guard);
 
         Self::set_app_server_client_info(
             forked_thread.as_ref(),

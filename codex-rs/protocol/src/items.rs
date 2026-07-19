@@ -80,6 +80,9 @@ pub struct UserMessageItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub client_name: Option<String>,
     pub content: Vec<UserInput>,
 }
 
@@ -430,6 +433,7 @@ impl UserMessageItem {
         Self {
             id: new_item_id(),
             client_id: None,
+            client_name: None,
             content: content.to_vec(),
         }
     }

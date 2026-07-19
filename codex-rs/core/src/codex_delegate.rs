@@ -222,6 +222,7 @@ pub(crate) async fn run_codex_thread_one_shot(
     // Send the initial input to kick off the one-shot turn.
     io.submit(Op::UserInput {
         items: input,
+        input_client_name: None,
         final_output_json_schema,
         responsesapi_client_metadata: None,
         additional_context: Default::default(),

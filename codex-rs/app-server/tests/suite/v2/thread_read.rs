@@ -549,6 +549,7 @@ async fn thread_search_occurrences_reads_paginated_projection() -> Result<()> {
                     CoreTurnItem::UserMessage(UserMessageItem {
                         id: "user-1".to_string(),
                         client_id: None,
+                        client_name: None,
                         content: vec![
                             codex_protocol::user_input::UserInput::Text {
                                 text: "Nee".to_string(),
@@ -567,6 +568,7 @@ async fn thread_search_occurrences_reads_paginated_projection() -> Result<()> {
                     CoreTurnItem::UserMessage(UserMessageItem {
                         id: "steer-1".to_string(),
                         client_id: None,
+                        client_name: None,
                         content: vec![codex_protocol::user_input::UserInput::Text {
                             text: "steer toward needle".to_string(),
                             text_elements: Vec::new(),
@@ -1548,6 +1550,7 @@ async fn paginated_history_lists_use_projected_turns_and_items() -> Result<()> {
                     CoreTurnItem::UserMessage(UserMessageItem {
                         id: "user-1".to_string(),
                         client_id: None,
+                        client_name: None,
                         content: Vec::new(),
                     }),
                 ),
@@ -1557,6 +1560,7 @@ async fn paginated_history_lists_use_projected_turns_and_items() -> Result<()> {
                     CoreTurnItem::UserMessage(UserMessageItem {
                         id: "steer-1".to_string(),
                         client_id: None,
+                        client_name: None,
                         content: Vec::new(),
                     }),
                 ),
@@ -1580,6 +1584,7 @@ async fn paginated_history_lists_use_projected_turns_and_items() -> Result<()> {
                     CoreTurnItem::UserMessage(UserMessageItem {
                         id: "user-2".to_string(),
                         client_id: None,
+                        client_name: None,
                         content: Vec::new(),
                     }),
                 ),
@@ -1601,11 +1606,13 @@ async fn paginated_history_lists_use_projected_turns_and_items() -> Result<()> {
             ThreadItem::UserMessage {
                 id: "user-1".to_string(),
                 client_id: None,
+                client_name: None,
                 content: Vec::new(),
             },
             ThreadItem::UserMessage {
                 id: "steer-1".to_string(),
                 client_id: None,
+                client_name: None,
                 content: Vec::new(),
             },
             ThreadItem::AgentMessage {
@@ -1627,6 +1634,7 @@ async fn paginated_history_lists_use_projected_turns_and_items() -> Result<()> {
         items: vec![ThreadItem::UserMessage {
             id: "user-2".to_string(),
             client_id: None,
+            client_name: None,
             content: Vec::new(),
         }],
         items_view: TurnItemsView::Full,
@@ -1796,6 +1804,7 @@ async fn paginated_history_lists_use_projected_turns_and_items() -> Result<()> {
                 ThreadItem::UserMessage {
                     id: "user-1".to_string(),
                     client_id: None,
+                    client_name: None,
                     content: Vec::new(),
                 },
                 ThreadItem::AgentMessage {
@@ -2275,6 +2284,7 @@ fn store_history_items() -> Vec<RolloutItem> {
     vec![RolloutItem::EventMsg(EventMsg::UserMessage(
         UserMessageEvent {
             client_id: None,
+            client_name: None,
             message: "history from store".to_string(),
             images: None,
             local_images: Vec::new(),

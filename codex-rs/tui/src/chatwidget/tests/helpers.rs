@@ -733,6 +733,7 @@ pub(super) fn replay_user_message_inputs(
         AppServerThreadItem::UserMessage {
             id: item_id.to_string(),
             client_id: None,
+            client_name: None,
             content,
         },
         "turn-1".to_string(),
@@ -960,6 +961,7 @@ pub(super) fn complete_user_message_for_inputs(
             item: AppServerThreadItem::UserMessage {
                 id: item_id.to_string(),
                 client_id: None,
+                client_name: None,
                 content,
             },
         }),

@@ -103,6 +103,7 @@ pub(crate) struct TurnRequestProcessor {
     thread_list_state_permit: Arc<Semaphore>,
     skills_watcher: Arc<SkillsWatcher>,
     turn_idempotency_lock: Arc<Mutex<()>>,
+    turn_input_locks: Arc<TurnInputLocks>,
     submitted_turn_idempotency: Arc<
         Mutex<
             HashSet<(
@@ -112,6 +113,28 @@ pub(crate) struct TurnRequestProcessor {
             )>,
         >,
     >,
+}
+
+#[derive(Default)]
+struct TurnInputLocks {
+    by_thread: Mutex<HashMap<ThreadId, std::sync::Weak<Mutex<()>>>>,
+}
+
+impl TurnInputLocks {
+    async fn lock(&self, thread_id: ThreadId) -> tokio::sync::OwnedMutexGuard<()> {
+        let lock = {
+            let mut by_thread = self.by_thread.lock().await;
+            by_thread.retain(|_, lock| lock.strong_count() > 0);
+            if let Some(lock) = by_thread.get(&thread_id).and_then(std::sync::Weak::upgrade) {
+                lock
+            } else {
+                let lock = Arc::new(Mutex::new(()));
+                by_thread.insert(thread_id, Arc::downgrade(&lock));
+                lock
+            }
+        };
+        lock.lock_owned().await
+    }
 }
 
 fn validate_turn_idempotency_key(key: &str) -> Result<(), JSONRPCErrorError> {
@@ -168,6 +191,22 @@ fn turn_steer_request_fingerprint(params: &TurnSteerParams) -> Result<String, JS
         internal_error(format!("failed to fingerprint turn/steer request: {err}"))
     })?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn durable_input_attribution_token(
+    action: codex_protocol::protocol::TurnIdempotencyAction,
+    originator: &str,
+    key: &str,
+    turn_id: &str,
+) -> String {
+    let action = match action {
+        codex_protocol::protocol::TurnIdempotencyAction::Start => "start",
+        codex_protocol::protocol::TurnIdempotencyAction::Steer => "steer",
+    };
+    format!(
+        "{:x}",
+        Sha256::digest(format!("{action}\0{originator}\0{key}\0{turn_id}").as_bytes())
+    )
 }
 
 fn turn_from_idempotency_match(found: &StoredTurnIdempotency) -> Turn {
@@ -261,6 +300,7 @@ impl TurnRequestProcessor {
             thread_list_state_permit,
             skills_watcher,
             turn_idempotency_lock: Arc::new(Mutex::new(())),
+            turn_input_locks: Arc::new(TurnInputLocks::default()),
             submitted_turn_idempotency: Arc::new(Mutex::new(HashSet::new())),
         }
     }
@@ -398,6 +438,16 @@ impl TurnRequestProcessor {
         request_id: &ConnectionRequestId,
         params: ReviewStartParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        // Review submission is another idle -> active transition. Serialize it
+        // with recursive archive exactly like turn/start so archive cannot
+        // validate an idle tree and then move a newly active rollout.
+        let _thread_list_state_permit =
+            self.thread_list_state_permit
+                .acquire()
+                .await
+                .map_err(|err| {
+                    internal_error(format!("failed to acquire thread lifecycle permit: {err}"))
+                })?;
         self.review_start_inner(request_id, params)
             .await
             .map(|()| None)
@@ -646,6 +696,17 @@ impl TurnRequestProcessor {
             None
         };
 
+        // Serialize acceptance with recursive archive. Before releasing this
+        // permit, the runtime status is marked active so archive cannot observe
+        // a quiescent gap between submission and TurnStarted delivery.
+        let _thread_list_state_permit =
+            self.thread_list_state_permit
+                .acquire()
+                .await
+                .map_err(|err| {
+                    internal_error(format!("failed to acquire thread lifecycle permit: {err}"))
+                })?;
+
         let (thread_id, thread) =
             self.load_thread(&params.thread_id)
                 .await
@@ -745,20 +806,49 @@ impl TurnRequestProcessor {
                     .map(PermissionProfile::from_legacy_sandbox_policy)
             });
 
-        // Start the turn by submitting the user input. Return its submission id as turn_id.
+        let _turn_input_guard = self.turn_input_locks.lock(thread_id).await;
+        // Allocate the turn id before submission so connection identity is bound
+        // to this request before the listener can observe TurnStarted/ItemStarted.
         let turn_op = Op::UserInput {
             items: mapped_items,
+            input_client_name: app_server_client_name.clone(),
             final_output_json_schema: params.output_schema,
             responsesapi_client_metadata: params.responsesapi_client_metadata,
             additional_context,
             thread_settings,
         };
-        let turn_id = if let Some((originator, key, fingerprint, turn_id, is_new, _guard)) =
-            idempotency_context
-        {
-            if is_new {
-                thread
-                    .append_rollout_items(&[RolloutItem::EventMsg(EventMsg::TurnIdempotency(
+        let turn_id = idempotency_context
+            .as_ref()
+            .map(|(_, _, _, turn_id, _, _)| turn_id.clone())
+            .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+        let input_client_token = idempotency_context
+            .as_ref()
+            .map(|(originator, key, _, _, _, _)| {
+                durable_input_attribution_token(
+                    codex_protocol::protocol::TurnIdempotencyAction::Start,
+                    originator,
+                    key,
+                    &turn_id,
+                )
+            })
+            .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+        let cancel_durable_attribution_on_failure = idempotency_context.is_none() && turn_has_input;
+        let thread_state = self.thread_state_manager.thread_state(thread_id).await;
+        let previous_client_name = {
+            let mut state = thread_state.lock().await;
+            state.record_turn_client_name(turn_id.clone(), app_server_client_name.clone())
+        };
+        let submission_result: Result<Option<(String, String)>, JSONRPCErrorError> = async {
+            self.thread_watch_manager
+                .note_turn_started(&thread_id.to_string())
+                .await;
+            if let Some((originator, key, fingerprint, reserved_turn_id, is_new, _guard)) =
+                idempotency_context
+            {
+                debug_assert_eq!(reserved_turn_id, turn_id);
+                let mut reservation_items = Vec::new();
+                if is_new {
+                    reservation_items.push(RolloutItem::EventMsg(EventMsg::TurnIdempotency(
                         codex_protocol::protocol::TurnIdempotencyEvent {
                             action: codex_protocol::protocol::TurnIdempotencyAction::Start,
                             cancelled: false,
@@ -767,52 +857,126 @@ impl TurnRequestProcessor {
                             turn_id: turn_id.clone(),
                             request_fingerprint: fingerprint,
                         },
-                    ))])
-                    .await
-                    .map_err(|err| {
+                    )));
+                    if turn_has_input {
+                        reservation_items.push(RolloutItem::EventMsg(EventMsg::InputAttribution(
+                            codex_protocol::protocol::InputAttributionEvent {
+                                token: input_client_token.clone(),
+                                cancelled: false,
+                                turn_id: turn_id.clone(),
+                                client_name: app_server_client_name.clone(),
+                            },
+                        )));
+                    }
+                }
+                if !reservation_items.is_empty() {
+                    thread
+                        .append_rollout_items(&reservation_items)
+                        .await
+                        .map_err(|err| {
+                            internal_error(format!(
+                                "failed to persist turn/start reservation: {err}"
+                            ))
+                        })?;
+                    thread.flush_rollout().await.map_err(|err| {
                         internal_error(format!(
-                            "failed to persist turn/start idempotency reservation: {err}"
+                            "failed to durably flush turn/start reservation: {err}"
                         ))
                     })?;
-                thread.flush_rollout().await.map_err(|err| {
-                    internal_error(format!(
-                        "failed to durably flush turn/start idempotency reservation: {err}"
-                    ))
-                })?;
+                }
+                thread
+                    .submit_user_input_with_id(
+                        turn_id.clone(),
+                        turn_op,
+                        self.request_trace_context(&request_id).await,
+                        client_user_message_id,
+                    )
+                    .await
+                    .map_err(|err| internal_error(format!("failed to start turn: {err}")))?;
+                Ok(Some((originator, key)))
+            } else {
+                if turn_has_input {
+                    thread
+                        .append_rollout_items(&[RolloutItem::EventMsg(EventMsg::InputAttribution(
+                            codex_protocol::protocol::InputAttributionEvent {
+                                token: input_client_token.clone(),
+                                cancelled: false,
+                                turn_id: turn_id.clone(),
+                                client_name: app_server_client_name.clone(),
+                            },
+                        ))])
+                        .await
+                        .map_err(|err| {
+                            internal_error(format!(
+                                "failed to persist turn/start input attribution: {err}"
+                            ))
+                        })?;
+                    thread.flush_rollout().await.map_err(|err| {
+                        internal_error(format!(
+                            "failed to durably flush turn/start input attribution: {err}"
+                        ))
+                    })?;
+                }
+                thread
+                    .submit_user_input_with_id(
+                        turn_id.clone(),
+                        turn_op,
+                        self.request_trace_context(&request_id).await,
+                        client_user_message_id,
+                    )
+                    .await
+                    .map_err(|err| internal_error(format!("failed to start turn: {err}")))?;
+                Ok(None)
             }
-            thread
-                .submit_user_input_with_id(
-                    turn_id.clone(),
-                    turn_op,
-                    self.request_trace_context(&request_id).await,
-                    client_user_message_id,
-                )
-                .await
-                .map_err(|err| {
-                    let error = internal_error(format!("failed to start turn: {err}"));
-                    self.track_error_response(&request_id, &error, /*error_type*/ None);
-                    error
-                })?;
+        }
+        .await;
+        let submitted_idempotency = match submission_result {
+            Ok(submitted) => submitted,
+            Err(error) => {
+                self.thread_watch_manager
+                    .note_turn_completed(&thread_id.to_string(), /*failed*/ true)
+                    .await;
+                thread_state
+                    .lock()
+                    .await
+                    .restore_turn_client_name(turn_id.as_str(), previous_client_name);
+                if cancel_durable_attribution_on_failure {
+                    thread
+                        .append_rollout_items(&[RolloutItem::EventMsg(
+                            EventMsg::InputAttribution(
+                                codex_protocol::protocol::InputAttributionEvent {
+                                    token: input_client_token,
+                                    cancelled: true,
+                                    turn_id: turn_id.clone(),
+                                    client_name: app_server_client_name,
+                                },
+                            ),
+                        )])
+                        .await
+                        .map_err(|err| {
+                            internal_error(format!(
+                                "failed to cancel turn/start input attribution after submission error: {err}; original error: {}",
+                                error.message
+                            ))
+                        })?;
+                    thread.flush_rollout().await.map_err(|err| {
+                        internal_error(format!(
+                            "failed to flush turn/start input attribution cancellation: {err}; original error: {}",
+                            error.message
+                        ))
+                    })?;
+                }
+                self.track_error_response(&request_id, &error, /*error_type*/ None);
+                return Err(error);
+            }
+        };
+        if let Some((originator, key)) = submitted_idempotency {
             self.submitted_turn_idempotency.lock().await.insert((
                 codex_protocol::protocol::TurnIdempotencyAction::Start,
                 originator,
                 key,
             ));
-            turn_id
-        } else {
-            thread
-                .submit_user_input_with_client_user_message_id(
-                    turn_op,
-                    self.request_trace_context(&request_id).await,
-                    client_user_message_id,
-                )
-                .await
-                .map_err(|err| {
-                    let error = internal_error(format!("failed to start turn: {err}"));
-                    self.track_error_response(&request_id, &error, /*error_type*/ None);
-                    error
-                })?
-        };
+        }
 
         if turn_has_input {
             let config_snapshot = thread.config_snapshot().await;
@@ -1252,30 +1416,50 @@ impl TurnRequestProcessor {
             .collect();
         let additional_context = map_additional_context(params.additional_context);
 
+        let _turn_input_guard = self.turn_input_locks.lock(thread_id).await;
+        let input_client_token = idempotency_context
+            .as_ref()
+            .map(|(originator, key, _, _)| {
+                durable_input_attribution_token(
+                    codex_protocol::protocol::TurnIdempotencyAction::Steer,
+                    originator,
+                    key,
+                    &params.expected_turn_id,
+                )
+            })
+            .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+        let mut reservation_items = Vec::new();
         if let Some((originator, key, fingerprint, _)) = idempotency_context.as_ref() {
-            thread
-                .append_rollout_items(&[RolloutItem::EventMsg(EventMsg::TurnIdempotency(
-                    codex_protocol::protocol::TurnIdempotencyEvent {
-                        action: codex_protocol::protocol::TurnIdempotencyAction::Steer,
-                        cancelled: false,
-                        key: key.clone(),
-                        originator: originator.clone(),
-                        turn_id: params.expected_turn_id.clone(),
-                        request_fingerprint: fingerprint.clone(),
-                    },
-                ))])
-                .await
-                .map_err(|err| {
-                    internal_error(format!(
-                        "failed to persist turn/steer idempotency reservation: {err}"
-                    ))
-                })?;
-            thread.flush_rollout().await.map_err(|err| {
-                internal_error(format!(
-                    "failed to durably flush turn/steer idempotency reservation: {err}"
-                ))
-            })?;
+            reservation_items.push(RolloutItem::EventMsg(EventMsg::TurnIdempotency(
+                codex_protocol::protocol::TurnIdempotencyEvent {
+                    action: codex_protocol::protocol::TurnIdempotencyAction::Steer,
+                    cancelled: false,
+                    key: key.clone(),
+                    originator: originator.clone(),
+                    turn_id: params.expected_turn_id.clone(),
+                    request_fingerprint: fingerprint.clone(),
+                },
+            )));
         }
+        reservation_items.push(RolloutItem::EventMsg(EventMsg::InputAttribution(
+            codex_protocol::protocol::InputAttributionEvent {
+                token: input_client_token.clone(),
+                cancelled: false,
+                turn_id: params.expected_turn_id.clone(),
+                client_name: app_server_client_name.clone(),
+            },
+        )));
+        thread
+            .append_rollout_items(&reservation_items)
+            .await
+            .map_err(|err| {
+                internal_error(format!("failed to persist turn/steer reservation: {err}"))
+            })?;
+        thread.flush_rollout().await.map_err(|err| {
+            internal_error(format!(
+                "failed to durably flush turn/steer reservation: {err}"
+            ))
+        })?;
 
         let steer_result = thread
             .steer_input(
@@ -1283,14 +1467,21 @@ impl TurnRequestProcessor {
                 additional_context,
                 Some(&params.expected_turn_id),
                 params.client_user_message_id,
+                app_server_client_name.clone(),
                 params.responsesapi_client_metadata,
             )
             .await;
-        if steer_result.is_err()
-            && let Some((originator, key, fingerprint, _)) = idempotency_context.as_ref()
-        {
-            thread
-                .append_rollout_items(&[RolloutItem::EventMsg(EventMsg::TurnIdempotency(
+        if steer_result.is_err() {
+            let mut cancellation_items = vec![RolloutItem::EventMsg(EventMsg::InputAttribution(
+                codex_protocol::protocol::InputAttributionEvent {
+                    token: input_client_token,
+                    cancelled: true,
+                    turn_id: params.expected_turn_id.clone(),
+                    client_name: app_server_client_name,
+                },
+            ))];
+            if let Some((originator, key, fingerprint, _)) = idempotency_context.as_ref() {
+                cancellation_items.push(RolloutItem::EventMsg(EventMsg::TurnIdempotency(
                     codex_protocol::protocol::TurnIdempotencyEvent {
                         action: codex_protocol::protocol::TurnIdempotencyAction::Steer,
                         cancelled: true,
@@ -1299,16 +1490,19 @@ impl TurnRequestProcessor {
                         turn_id: params.expected_turn_id.clone(),
                         request_fingerprint: fingerprint.clone(),
                     },
-                ))])
+                )));
+            }
+            thread
+                .append_rollout_items(&cancellation_items)
                 .await
                 .map_err(|err| {
                     internal_error(format!(
-                        "failed to cancel rejected turn/steer idempotency reservation: {err}"
+                        "failed to cancel rejected turn/steer reservation: {err}"
                     ))
                 })?;
             thread.flush_rollout().await.map_err(|err| {
                 internal_error(format!(
-                    "failed to flush rejected turn/steer idempotency cancellation: {err}"
+                    "failed to flush rejected turn/steer cancellation: {err}"
                 ))
             })?;
         }
@@ -1566,6 +1760,7 @@ impl TurnRequestProcessor {
             vec![ThreadItem::UserMessage {
                 id: turn_id.clone(),
                 client_id: None,
+                client_name: None,
                 content: vec![V2UserInput::Text {
                     text: display_text.to_string(),
                     // Review prompt display text is synthesized; no UI element ranges to preserve.
@@ -1609,14 +1804,26 @@ impl TurnRequestProcessor {
         display_text: &str,
         parent_thread_id: String,
     ) -> std::result::Result<(), JSONRPCErrorError> {
-        let turn_id = self
+        let parent_thread_uuid = parent_thread.session_configured().thread_id;
+        self.thread_watch_manager
+            .note_turn_started(&parent_thread_uuid.to_string())
+            .await;
+        let turn_id = match self
             .submit_core_op(
                 request_id,
                 parent_thread.as_ref(),
                 Op::Review { review_request },
             )
             .await
-            .map_err(|err| internal_error(format!("failed to start review: {err}")))?;
+        {
+            Ok(turn_id) => turn_id,
+            Err(err) => {
+                self.thread_watch_manager
+                    .note_turn_completed(&parent_thread_uuid.to_string(), /*failed*/ true)
+                    .await;
+                return Err(internal_error(format!("failed to start review: {err}")));
+            }
+        };
         let turn = Self::build_review_turn(turn_id, display_text);
         self.emit_review_started(request_id, turn, parent_thread_id)
             .await;
@@ -1661,6 +1868,12 @@ impl TurnRequestProcessor {
             )
             .await
             .map_err(|err| internal_error(format!("failed to start detached review: {err}")))?;
+        // The lifecycle permit is still held by review_start. Publish the
+        // active marker before releasing it, closing the child-start/archive
+        // observation gap for detached reviews.
+        self.thread_watch_manager
+            .note_turn_started(&thread_id.to_string())
+            .await;
 
         let fallback_provider = self.config.model_provider_id.as_str();
         let stored_thread = match review_thread

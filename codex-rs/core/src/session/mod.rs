@@ -1169,6 +1169,7 @@ impl Session {
                     text,
                     text_elements: Vec::new(),
                 }],
+                input_client_name: None,
                 final_output_json_schema: None,
                 responsesapi_client_metadata: None,
                 additional_context: Default::default(),
@@ -3794,6 +3795,7 @@ impl Session {
         turn_context: &TurnContext,
         input: &[UserInput],
         client_id: Option<String>,
+        client_name: Option<String>,
     ) {
         // Persist the user message to history, but emit the turn item from `UserInput` so
         // UI-only `text_elements` are preserved. `ResponseItem::Message` does not carry
@@ -3803,6 +3805,7 @@ impl Session {
             .await;
         let mut user_message_item = UserMessageItem::new(input);
         user_message_item.client_id = client_id;
+        user_message_item.client_name = client_name;
         let turn_item = TurnItem::UserMessage(user_message_item);
         self.emit_turn_item_started(turn_context, &turn_item).await;
         self.emit_turn_item_completed(turn_context, turn_item).await;
@@ -3840,6 +3843,7 @@ impl Session {
         additional_context: BTreeMap<String, AdditionalContextEntry>,
         expected_turn_id: Option<&str>,
         client_user_message_id: Option<String>,
+        input_client_name: Option<String>,
         responsesapi_client_metadata: Option<HashMap<String, String>>,
     ) -> Result<String, SteerInputError> {
         let mut active = self.active_turn.lock().await;
@@ -3899,6 +3903,7 @@ impl Session {
         pending_input.push(TurnInput::UserInput {
             content: input,
             client_id: client_user_message_id,
+            client_name: input_client_name,
         });
         self.input_queue
             .extend_pending_input_and_accept_mailbox_delivery_for_turn_state(

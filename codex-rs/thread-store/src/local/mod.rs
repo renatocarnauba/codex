@@ -16,6 +16,8 @@ mod update_thread_metadata;
 mod test_support;
 
 use codex_protocol::ThreadId;
+use codex_protocol::protocol::ThreadCreationIdempotency;
+use codex_protocol::protocol::ThreadCreationIdempotencyKind;
 use codex_protocol::protocol::ThreadHistoryMode;
 use codex_rollout::RolloutRecorder;
 use codex_rollout::StateDbHandle;
@@ -116,6 +118,19 @@ pub struct LocalThreadStoreConfig {
     pub sqlite_home: PathBuf,
     /// Provider used only when older local metadata does not contain one.
     pub default_model_provider_id: String,
+}
+
+fn creation_kind(kind: ThreadCreationIdempotencyKind) -> &'static str {
+    match kind {
+        ThreadCreationIdempotencyKind::Start => "start",
+        ThreadCreationIdempotencyKind::Fork => "fork",
+    }
+}
+
+fn idempotency_index_error(err: impl std::fmt::Display) -> ThreadStoreError {
+    ThreadStoreError::Internal {
+        message: format!("thread creation idempotency index failed: {err}"),
+    }
 }
 
 impl LocalThreadStoreConfig {
@@ -345,29 +360,143 @@ impl ThreadStore for LocalThreadStore {
 
     fn find_thread_by_creation_idempotency_key(
         &self,
+        _kind: ThreadCreationIdempotencyKind,
         originator: &str,
         key: &str,
     ) -> ThreadStoreFuture<'_, Option<StoredThread>> {
         let originator = originator.to_string();
         let key = key.to_string();
         Box::pin(async move {
-            let Some((_thread_id, path)) = codex_rollout::find_thread_by_creation_idempotency_key(
-                self.config.codex_home.as_path(),
-                originator.as_str(),
-                key.as_str(),
-            )
-            .await
-            .map_err(|err| ThreadStoreError::Internal {
-                message: format!("failed to find thread creation idempotency key: {err}"),
-            })?
+            let state_db = self
+                .state_db
+                .as_ref()
+                .ok_or(ThreadStoreError::Unsupported {
+                    operation: "find_thread_by_creation_idempotency_key_without_state_db",
+                })?;
+            let Some((indexed_kind, thread_id, path, committed)) = state_db
+                .get_thread_creation_idempotency(originator.as_str(), key.as_str())
+                .await
+                .map_err(idempotency_index_error)?
             else {
                 return Ok(None);
             };
-            read_thread::read_thread_by_rollout_path(
+            if !committed {
+                return Err(ThreadStoreError::Internal {
+                    message: format!(
+                        "thread creation idempotency key is reserved by pending thread {thread_id}"
+                    ),
+                });
+            }
+            let path = path.ok_or_else(|| ThreadStoreError::Internal {
+                message: format!(
+                    "committed thread creation idempotency key points to missing thread {thread_id}"
+                ),
+            })?;
+            let stored = read_thread::read_thread_by_rollout_path(
                 self, path, /*include_archived*/ true, /*include_history*/ false,
             )
-            .await
-            .map(Some)
+            .await?;
+            let stored_kind = stored
+                .extra_config
+                .as_ref()
+                .and_then(|extra| extra.thread_creation_idempotency.as_ref())
+                .map(|identity| creation_kind(identity.kind));
+            if stored_kind != Some(indexed_kind.as_str()) {
+                return Err(ThreadStoreError::Internal {
+                    message: format!(
+                        "thread creation idempotency index kind {indexed_kind} disagrees with thread {thread_id} metadata"
+                    ),
+                });
+            }
+            Ok(Some(stored))
+        })
+    }
+
+    fn reserve_thread_creation_idempotency(
+        &self,
+        originator: &str,
+        idempotency: &ThreadCreationIdempotency,
+        thread_id: ThreadId,
+    ) -> ThreadStoreFuture<'_, ()> {
+        let originator = originator.to_string();
+        let idempotency = idempotency.clone();
+        Box::pin(async move {
+            let state_db = self
+                .state_db
+                .as_ref()
+                .ok_or(ThreadStoreError::Unsupported {
+                    operation: "reserve_thread_creation_idempotency_without_state_db",
+                })?;
+            state_db
+                .reserve_thread_creation_idempotency(
+                    originator.as_str(),
+                    idempotency.key.as_str(),
+                    creation_kind(idempotency.kind),
+                    thread_id,
+                )
+                .await
+                .map_err(idempotency_index_error)
+        })
+    }
+
+    fn commit_thread_creation_idempotency(
+        &self,
+        originator: &str,
+        idempotency: &ThreadCreationIdempotency,
+        thread_id: ThreadId,
+    ) -> ThreadStoreFuture<'_, ()> {
+        let originator = originator.to_string();
+        let idempotency = idempotency.clone();
+        Box::pin(async move {
+            let state_db = self
+                .state_db
+                .as_ref()
+                .ok_or(ThreadStoreError::Unsupported {
+                    operation: "commit_thread_creation_idempotency_without_state_db",
+                })?;
+            if !state_db
+                .commit_thread_creation_idempotency(
+                    originator.as_str(),
+                    idempotency.key.as_str(),
+                    thread_id,
+                )
+                .await
+                .map_err(idempotency_index_error)?
+            {
+                return Err(ThreadStoreError::Internal {
+                    message: format!(
+                        "thread creation idempotency reservation for {thread_id} was not pending"
+                    ),
+                });
+            }
+            Ok(())
+        })
+    }
+
+    fn remove_thread_creation_idempotency_reservation(
+        &self,
+        originator: &str,
+        idempotency: &ThreadCreationIdempotency,
+        thread_id: ThreadId,
+    ) -> ThreadStoreFuture<'_, ()> {
+        let originator = originator.to_string();
+        let idempotency = idempotency.clone();
+        Box::pin(async move {
+            let state_db = self
+                .state_db
+                .as_ref()
+                .ok_or(ThreadStoreError::Unsupported {
+                    operation: "remove_thread_creation_idempotency_reservation_without_state_db",
+                })?;
+            state_db
+                .delete_thread_creation_idempotency_reservation(
+                    originator.as_str(),
+                    idempotency.key.as_str(),
+                    thread_id,
+                )
+                .await
+                .map_err(idempotency_index_error)?;
+            Ok(())
         })
     }
 
@@ -1514,6 +1643,7 @@ mod tests {
             item: TurnItem::UserMessage(UserMessageItem {
                 id: "item-1".to_string(),
                 client_id: None,
+                client_name: None,
                 content: Vec::new(),
             }),
             completed_at_ms: 1,
@@ -1592,6 +1722,7 @@ mod tests {
     fn user_message_item(message: &str) -> RolloutItem {
         RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
             client_id: None,
+            client_name: None,
             message: message.to_string(),
             images: None,
             local_images: Vec::new(),

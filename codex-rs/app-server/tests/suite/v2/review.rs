@@ -147,6 +147,7 @@ async fn review_start_runs_review_turn_and_emits_code_review_item() -> Result<()
         vec![ThreadItem::UserMessage {
             id: turn_id.clone(),
             client_id: None,
+            client_name: None,
             content: vec![V2UserInput::Text {
                 text: "commit 1234567: Tidy UI colors".to_string(),
                 text_elements: Vec::new(),
@@ -259,6 +260,7 @@ async fn review_start_exec_approval_item_id_matches_command_execution_item() -> 
         vec![ThreadItem::UserMessage {
             id: turn_id.clone(),
             client_id: None,
+            client_name: None,
             content: vec![V2UserInput::Text {
                 text: "commit 1234567: Check review approvals".to_string(),
                 text_elements: Vec::new(),
@@ -420,6 +422,7 @@ async fn review_start_with_detached_delivery_returns_new_thread_id() -> Result<(
         vec![ThreadItem::UserMessage {
             id: turn.id.clone(),
             client_id: None,
+            client_name: None,
             content: vec![V2UserInput::Text {
                 text: expected_prompt.clone(),
                 text_elements: Vec::new(),

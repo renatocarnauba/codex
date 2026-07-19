@@ -34,6 +34,10 @@ const STARTUP_BACKFILL_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const STARTUP_BACKFILL_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 #[cfg(test)]
 const STARTUP_BACKFILL_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(not(test))]
+const CREATION_RESERVATION_LEASE_SECONDS: i64 = 10;
+#[cfg(test)]
+const CREATION_RESERVATION_LEASE_SECONDS: i64 = 1;
 
 /// Initialize the state runtime for thread state persistence.
 ///
@@ -145,34 +149,52 @@ async fn wait_for_backfill_gate(
     let wait_started = Instant::now();
     let mut reported_wait = false;
     loop {
+        let pending_reservations = runtime
+            .reconcile_thread_creation_idempotency_reservations(CREATION_RESERVATION_LEASE_SECONDS)
+            .await
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "failed to reconcile thread creation reservations at {}: {err}",
+                    codex_home.display()
+                )
+            })?;
         let backfill_state = runtime.get_backfill_state().await.map_err(|err| {
             anyhow::anyhow!(
                 "failed to read backfill state at {}: {err}",
                 codex_home.display()
             )
         })?;
-        if backfill_state.status == codex_state::BackfillStatus::Complete {
+        if backfill_state.status == codex_state::BackfillStatus::Complete
+            && pending_reservations == 0
+        {
             return Ok(());
         }
 
-        if let Some(backfill_lease_seconds) = backfill_lease_seconds {
-            metadata::backfill_sessions_with_lease(
-                runtime,
-                codex_home,
-                default_model_provider_id,
-                backfill_lease_seconds,
-            )
-            .await;
-        } else {
-            metadata::backfill_sessions(runtime, codex_home, default_model_provider_id).await;
+        if backfill_state.status != codex_state::BackfillStatus::Complete {
+            if let Some(backfill_lease_seconds) = backfill_lease_seconds {
+                metadata::backfill_sessions_with_lease(
+                    runtime,
+                    codex_home,
+                    default_model_provider_id,
+                    backfill_lease_seconds,
+                )
+                .await;
+            } else {
+                metadata::backfill_sessions(runtime, codex_home, default_model_provider_id).await;
+            }
         }
+        let pending_reservations = runtime
+            .reconcile_thread_creation_idempotency_reservations(CREATION_RESERVATION_LEASE_SECONDS)
+            .await?;
         let backfill_state = runtime.get_backfill_state().await.map_err(|err| {
             anyhow::anyhow!(
                 "failed to read backfill state at {} after startup backfill: {err}",
                 codex_home.display()
             )
         })?;
-        if backfill_state.status == codex_state::BackfillStatus::Complete {
+        if backfill_state.status == codex_state::BackfillStatus::Complete
+            && pending_reservations == 0
+        {
             return Ok(());
         }
         if wait_started.elapsed() >= STARTUP_BACKFILL_WAIT_TIMEOUT {
@@ -185,7 +207,7 @@ async fn wait_for_backfill_gate(
         }
 
         let message = format!(
-            "state db backfill is {} at {}; waiting up to {:?} before retrying startup initialization",
+            "state db backfill is {} with {pending_reservations} pending creation reservations at {}; waiting up to {:?} before retrying startup initialization",
             backfill_state.status.as_str(),
             codex_home.display(),
             STARTUP_BACKFILL_WAIT_TIMEOUT,

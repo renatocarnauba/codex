@@ -315,6 +315,10 @@ pub fn local_agent_graph_store_from_state_db(
 }
 
 impl ThreadManager {
+    pub fn thread_store(&self) -> Arc<dyn ThreadStore> {
+        Arc::clone(&self.state.thread_store)
+    }
+
     /// Resolves the originator that a new root thread will persist for an app-server request.
     /// Keeping this resolution in core prevents idempotency namespaces from drifting from the
     /// originator actually written to the rollout.

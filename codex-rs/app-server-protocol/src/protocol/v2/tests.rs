@@ -2534,6 +2534,7 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
     let user_item = TurnItem::UserMessage(UserMessageItem {
         id: "user-1".to_string(),
         client_id: Some("client-message-1".to_string()),
+        client_name: None,
         content: vec![
             CoreUserInput::Text {
                 text: "hello".to_string(),
@@ -2569,6 +2570,7 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
         ThreadItem::UserMessage {
             id: "user-1".to_string(),
             client_id: Some("client-message-1".to_string()),
+            client_name: None,
             content: vec![
                 UserInput::Text {
                     text: "hello".to_string(),

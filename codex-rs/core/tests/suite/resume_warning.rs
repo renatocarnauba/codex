@@ -64,6 +64,7 @@ fn resume_history(
             })),
             RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "seed".to_string(),
                 images: None,
                 local_images: vec![],

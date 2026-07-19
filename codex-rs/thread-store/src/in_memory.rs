@@ -695,6 +695,7 @@ impl ThreadStore for InMemoryThreadStore {
 
     fn find_thread_by_creation_idempotency_key(
         &self,
+        _kind: codex_protocol::protocol::ThreadCreationIdempotencyKind,
         originator: &str,
         key: &str,
     ) -> ThreadStoreFuture<'_, Option<StoredThread>> {
@@ -711,8 +712,7 @@ impl ThreadStore for InMemoryThreadStore {
                             .extra_config
                             .as_ref()
                             .and_then(|extra| extra.thread_creation_idempotency.as_ref())
-                            .map(|value| value.key.as_str())
-                            == Some(key.as_str()))
+                            .is_some_and(|value| value.key == key))
                     .then_some(*thread_id)
                 })
                 .collect::<Vec<_>>();
@@ -729,6 +729,33 @@ impl ThreadStore for InMemoryThreadStore {
                 }),
             }
         })
+    }
+
+    fn reserve_thread_creation_idempotency(
+        &self,
+        _originator: &str,
+        _idempotency: &codex_protocol::protocol::ThreadCreationIdempotency,
+        _thread_id: codex_protocol::ThreadId,
+    ) -> ThreadStoreFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn commit_thread_creation_idempotency(
+        &self,
+        _originator: &str,
+        _idempotency: &codex_protocol::protocol::ThreadCreationIdempotency,
+        _thread_id: codex_protocol::ThreadId,
+    ) -> ThreadStoreFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn remove_thread_creation_idempotency_reservation(
+        &self,
+        _originator: &str,
+        _idempotency: &codex_protocol::protocol::ThreadCreationIdempotency,
+        _thread_id: codex_protocol::ThreadId,
+    ) -> ThreadStoreFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
     }
 
     fn find_turn_by_idempotency_key(

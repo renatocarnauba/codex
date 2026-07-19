@@ -1662,6 +1662,7 @@ fn completed_legacy_event_history_is_not_mid_turn() {
     let completed_history = InitialHistory::Forked(vec![
         RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
             client_id: None,
+            client_name: None,
             message: "hello".to_string(),
             images: None,
             text_elements: Vec::new(),
@@ -1692,6 +1693,7 @@ fn mixed_response_and_legacy_user_event_history_is_mid_turn() {
         RolloutItem::ResponseItem(user_msg("hello")),
         RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
             client_id: None,
+            client_name: None,
             message: "hello".to_string(),
             images: None,
             text_elements: Vec::new(),

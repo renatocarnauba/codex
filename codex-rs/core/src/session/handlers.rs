@@ -197,6 +197,7 @@ pub(super) async fn user_input_or_turn_inner(
 ) {
     let Op::UserInput {
         items,
+        input_client_name,
         final_output_json_schema,
         responsesapi_client_metadata,
         additional_context,
@@ -232,6 +233,7 @@ pub(super) async fn user_input_or_turn_inner(
             additional_context.clone(),
             /*expected_turn_id*/ None,
             client_user_message_id.clone(),
+            input_client_name.clone(),
             responsesapi_client_metadata.clone(),
         )
         .await
@@ -264,6 +266,7 @@ pub(super) async fn user_input_or_turn_inner(
                 task_input.push(TurnInput::UserInput {
                     content: items,
                     client_id: client_user_message_id,
+                    client_name: input_client_name,
                 });
             }
             sess.spawn_task(

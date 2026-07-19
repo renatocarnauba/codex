@@ -3098,6 +3098,7 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
         RolloutItem::EventMsg(EventMsg::UserMessage(
             codex_protocol::protocol::UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "forked seed".to_string(),
                 images: None,
                 local_images: Vec::new(),
@@ -3299,6 +3300,7 @@ async fn thread_rollback_recomputes_previous_turn_settings_and_reference_context
         RolloutItem::EventMsg(EventMsg::UserMessage(
             codex_protocol::protocol::UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "turn 1 user".to_string(),
                 images: None,
                 local_images: Vec::new(),
@@ -3330,6 +3332,7 @@ async fn thread_rollback_recomputes_previous_turn_settings_and_reference_context
         RolloutItem::EventMsg(EventMsg::UserMessage(
             codex_protocol::protocol::UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "turn 2 user".to_string(),
                 images: None,
                 local_images: Vec::new(),
@@ -3422,6 +3425,7 @@ async fn thread_rollback_restores_cleared_reference_context_item_after_compactio
         )),
         RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
             client_id: None,
+            client_name: None,
             message: "turn 1 user".to_string(),
             images: None,
             local_images: Vec::new(),
@@ -3477,6 +3481,7 @@ async fn thread_rollback_restores_cleared_reference_context_item_after_compactio
         )),
         RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
             client_id: None,
+            client_name: None,
             message: "turn 2 user".to_string(),
             images: None,
             local_images: Vec::new(),
@@ -3557,6 +3562,7 @@ async fn thread_rollback_persists_marker_and_replays_cumulatively() {
         )),
         RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
             client_id: None,
+            client_name: None,
             message: "turn 1 user".to_string(),
             images: None,
             local_images: Vec::new(),
@@ -3586,6 +3592,7 @@ async fn thread_rollback_persists_marker_and_replays_cumulatively() {
         )),
         RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
             client_id: None,
+            client_name: None,
             message: "turn 2 user".to_string(),
             images: None,
             local_images: Vec::new(),
@@ -3615,6 +3622,7 @@ async fn thread_rollback_persists_marker_and_replays_cumulatively() {
         )),
         RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
             client_id: None,
+            client_name: None,
             message: "turn 3 user".to_string(),
             images: None,
             local_images: Vec::new(),
@@ -9056,6 +9064,7 @@ async fn record_context_updates_and_set_reference_context_item_persists_full_rei
         .persist_rollout_items(&[RolloutItem::EventMsg(EventMsg::UserMessage(
             UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "seed rollout".to_string(),
                 images: None,
                 local_images: Vec::new(),
@@ -9697,6 +9706,7 @@ async fn task_finish_emits_turn_item_lifecycle_for_leftover_pending_user_input()
         fourth.msg,
         EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
             message,
             images,
             text_elements,

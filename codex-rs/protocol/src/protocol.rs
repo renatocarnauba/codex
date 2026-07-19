@@ -556,6 +556,8 @@ pub enum Op {
     UserInput {
         /// User input items, see `InputItem`
         items: Vec<UserInput>,
+        /// Authenticated app-server connection that supplied this individual input.
+        input_client_name: Option<String>,
         /// Optional JSON Schema used to constrain the final assistant message for this turn.
         final_output_json_schema: Option<Value>,
         /// Optional turn-scoped Responses API `client_metadata`.
@@ -725,6 +727,7 @@ impl From<Vec<UserInput>> for Op {
     fn from(value: Vec<UserInput>) -> Self {
         Op::UserInput {
             items: value,
+            input_client_name: None,
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
@@ -1331,6 +1334,10 @@ pub enum EventMsg {
     /// Durable app-server reservation for an idempotent turn action.
     /// App-server writes this directly to the rollout before accepting the core submission.
     TurnIdempotency(TurnIdempotencyEvent),
+
+    /// Durable app-server attribution for a user input.
+    /// App-server writes this directly to the rollout before accepting the core submission.
+    InputAttribution(InputAttributionEvent),
 
     /// Persistent thread-settings overrides from the correlated submission have
     /// been applied to the session configuration.
@@ -2053,6 +2060,20 @@ pub struct TurnIdempotencyEvent {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct InputAttributionEvent {
+    /// Stable correlation token shared by the reservation and an optional cancellation.
+    pub token: String,
+    /// A later matching cancellation removes an input whose core submission was rejected.
+    #[serde(default)]
+    pub cancelled: bool,
+    pub turn_id: String,
+    /// Authenticated app-server connection name that supplied this individual input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub client_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct ThreadSettingsAppliedEvent {
     pub thread_settings: ThreadSettingsSnapshot,
 }
@@ -2349,6 +2370,9 @@ pub struct AgentMessageEvent {
 pub struct UserMessageEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub client_name: Option<String>,
     pub message: String,
     /// Image URLs sourced from `UserInput::Image`. These are safe
     /// to replay in legacy UI history events and correspond to images sent to
@@ -5816,6 +5840,7 @@ mod tests {
     fn user_message_event_serializes_empty_metadata_vectors() -> Result<()> {
         let event = UserMessageEvent {
             client_id: None,
+            client_name: None,
             message: "hello".to_string(),
             images: None,
             local_images: Vec::new(),

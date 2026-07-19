@@ -528,6 +528,7 @@ async fn live_app_server_user_message_item_completed_does_not_duplicate_rendered
             item: AppServerThreadItem::UserMessage {
                 id: "user-1".to_string(),
                 client_id: None,
+                client_name: None,
                 content: vec![AppServerUserInput::Text {
                     text: "Hi, are you there?".to_string(),
                     text_elements: Vec::new(),
@@ -552,6 +553,7 @@ async fn live_app_server_user_message_omits_unsupported_media() {
             item: AppServerThreadItem::UserMessage {
                 id: "user-1".to_string(),
                 client_id: None,
+                client_name: None,
                 content: vec![
                     AppServerUserInput::Text {
                         text: "Please inspect the attachments.".to_string(),

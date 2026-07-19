@@ -256,6 +256,7 @@ fn item_completion_persistence_depends_on_history_mode() {
         item: TurnItem::UserMessage(UserMessageItem {
             id: "item".to_string(),
             client_id: None,
+            client_name: None,
             content: Vec::new(),
         }),
         completed_at_ms: 0,

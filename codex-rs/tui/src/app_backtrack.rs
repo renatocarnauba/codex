@@ -669,6 +669,7 @@ mod tests {
                 .map(|index| ThreadItem::UserMessage {
                     id: format!("user-{index}"),
                     client_id: None,
+                    client_name: None,
                     content: vec![UserInput::Text {
                         text: format!("{turn_id}-prompt-{index}"),
                         text_elements: Vec::new(),
@@ -855,6 +856,7 @@ mod tests {
                 .map(|index| ThreadItem::UserMessage {
                     id: format!("review-prompt-{index}"),
                     client_id: None,
+                    client_name: None,
                     content: vec![UserInput::Text {
                         text: review_prompt.to_string(),
                         text_elements: Vec::new(),
@@ -903,6 +905,7 @@ mod tests {
         selected_turn.items = vec![ThreadItem::UserMessage {
             id: "selected-prompt".to_string(),
             client_id: None,
+            client_name: None,
             content: vec![
                 UserInput::Text {
                     text: "use $skill @sample $google-calendar".to_string(),

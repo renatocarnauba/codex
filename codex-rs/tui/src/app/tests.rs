@@ -362,6 +362,7 @@ async fn enqueue_primary_thread_session_replays_turns_before_initial_prompt_subm
             vec![ThreadItem::UserMessage {
                 id: "user-1".to_string(),
                 client_id: None,
+                client_name: None,
                 content: vec![AppServerUserInput::Text {
                     text: "earlier prompt".to_string(),
                     text_elements: Vec::new(),
@@ -3783,6 +3784,7 @@ async fn side_thread_snapshot_hides_forked_parent_transcript() {
         vec![ThreadItem::UserMessage {
             id: "parent-user".to_string(),
             client_id: None,
+            client_name: None,
             content: vec![AppServerUserInput::Text {
                 text: "parent prompt should stay hidden".to_string(),
                 text_elements: Vec::new(),
@@ -6359,6 +6361,7 @@ async fn replay_thread_snapshot_replays_turn_history_in_order() {
                     items: vec![ThreadItem::UserMessage {
                         id: "user-1".to_string(),
                         client_id: None,
+                        client_name: None,
                         content: vec![AppServerUserInput::Text {
                             text: "first prompt".to_string(),
                             text_elements: Vec::new(),
@@ -6377,6 +6380,7 @@ async fn replay_thread_snapshot_replays_turn_history_in_order() {
                         ThreadItem::UserMessage {
                             id: "user-2".to_string(),
                             client_id: None,
+                            client_name: None,
                             content: vec![AppServerUserInput::Text {
                                 text: "third prompt".to_string(),
                                 text_elements: Vec::new(),
@@ -6527,6 +6531,7 @@ async fn refreshed_snapshot_session_persists_resumed_turns() {
         vec![ThreadItem::UserMessage {
             id: "user-1".to_string(),
             client_id: None,
+            client_name: None,
             content: vec![AppServerUserInput::Text {
                 text: "restored prompt".to_string(),
                 text_elements: Vec::new(),

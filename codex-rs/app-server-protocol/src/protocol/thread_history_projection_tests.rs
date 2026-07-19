@@ -108,6 +108,7 @@ fn projects_completed_canonical_turn_items() {
     let user_item = TurnItem::UserMessage(UserMessageItem {
         id: "user-1".to_string(),
         client_id: None,
+        client_name: None,
         content: vec![UserInput::Text {
             text: "hello".to_string(),
             text_elements: Vec::new(),

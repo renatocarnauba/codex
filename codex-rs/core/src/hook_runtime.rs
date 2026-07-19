@@ -575,11 +575,16 @@ pub(crate) async fn record_pending_input(
     additional_contexts: Vec<String>,
 ) {
     match pending_input {
-        TurnInput::UserInput { content, client_id } => {
+        TurnInput::UserInput {
+            content,
+            client_id,
+            client_name,
+        } => {
             sess.record_user_prompt_and_emit_turn_item(
                 turn_context.as_ref(),
                 content.as_slice(),
                 client_id,
+                client_name,
             )
             .await;
         }

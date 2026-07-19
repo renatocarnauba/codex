@@ -100,6 +100,7 @@ pub fn should_persist_event_msg(ev: &EventMsg, history_mode: ThreadHistoryMode) 
         | EventMsg::ThreadRolledBack(_)
         | EventMsg::TurnAborted(_)
         | EventMsg::TurnIdempotency(_)
+        | EventMsg::InputAttribution(_)
         | EventMsg::TurnStarted(_)
         | EventMsg::TurnComplete(_)
         | EventMsg::ThreadSettingsApplied(_) => true,

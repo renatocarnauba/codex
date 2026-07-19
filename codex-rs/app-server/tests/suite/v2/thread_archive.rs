@@ -2,10 +2,16 @@ use anyhow::Result;
 use app_test_support::TestAppServer;
 use app_test_support::create_fake_rollout;
 use app_test_support::create_mock_responses_server_repeating_assistant;
+use app_test_support::create_mock_responses_server_sequence_unchecked;
+use app_test_support::create_shell_command_sse_response;
 use app_test_support::to_response;
 use codex_app_server_protocol::JSONRPCError;
+use codex_app_server_protocol::JSONRPCMessage;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
+use codex_app_server_protocol::ReviewDelivery;
+use codex_app_server_protocol::ReviewStartParams;
+use codex_app_server_protocol::ReviewTarget;
 use codex_app_server_protocol::ThreadArchiveParams;
 use codex_app_server_protocol::ThreadArchiveResponse;
 use codex_app_server_protocol::ThreadArchivedNotification;
@@ -30,7 +36,7 @@ use std::path::Path;
 use tempfile::TempDir;
 use tokio::time::timeout;
 
-const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[tokio::test]
 async fn thread_archive_requires_materialized_rollout() -> Result<()> {
@@ -287,6 +293,228 @@ async fn thread_archive_archives_spawned_descendants() -> Result<()> {
 }
 
 #[tokio::test]
+async fn thread_archive_rejects_active_descendant_without_partial_mutation() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let workdir = TempDir::new()?;
+    let server =
+        create_mock_responses_server_sequence_unchecked(vec![create_shell_command_sse_response(
+            vec!["sleep".to_string(), "5".to_string()],
+            Some(workdir.path()),
+            Some(10_000),
+            "call_active_descendant",
+        )?])
+        .await;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let parent_id = create_fake_rollout(
+        codex_home.path(),
+        "2025-01-01T00-00-00",
+        "2025-01-01T00:00:00Z",
+        "parent",
+        Some("mock_provider"),
+        /*git_info*/ None,
+    )?;
+    let child_id = create_fake_rollout(
+        codex_home.path(),
+        "2025-01-01T00-01-00",
+        "2025-01-01T00:01:00Z",
+        "child",
+        Some("mock_provider"),
+        /*git_info*/ None,
+    )?;
+    let parent_thread_id = ThreadId::from_string(&parent_id)?;
+    let child_thread_id = ThreadId::from_string(&child_id)?;
+    let state_db =
+        StateRuntime::init(codex_home.path().to_path_buf(), "mock_provider".into()).await?;
+    state_db
+        .mark_backfill_complete(/*last_watermark*/ None)
+        .await?;
+    state_db
+        .upsert_thread_spawn_edge(
+            parent_thread_id,
+            child_thread_id,
+            DirectionalThreadSpawnEdgeStatus::Open,
+        )
+        .await?;
+
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .without_auto_env()
+        .build()
+        .await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    let resume_id = mcp
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id: child_id.clone(),
+            ..Default::default()
+        })
+        .await?;
+    let resume_response = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(resume_id)),
+    )
+    .await??;
+    let _: ThreadResumeResponse = to_response(resume_response)?;
+
+    let turn_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: child_id.clone(),
+            input: vec![UserInput::Text {
+                text: "keep child active".to_string(),
+                text_elements: Vec::new(),
+            }],
+            cwd: Some(workdir.path().to_path_buf()),
+            ..Default::default()
+        })
+        .await?;
+    let turn_response = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_id)),
+    )
+    .await??;
+    let _: TurnStartResponse = to_response(turn_response)?;
+
+    let archive_id = mcp
+        .send_thread_archive_request(ThreadArchiveParams {
+            thread_id: parent_id.clone(),
+        })
+        .await?;
+    let archive_error = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(archive_id)),
+    )
+    .await??;
+    assert!(archive_error.error.message.contains("active turns exist"));
+
+    for thread_id in [&parent_id, &child_id] {
+        assert!(
+            find_thread_path_by_id_str(codex_home.path(), thread_id, /*state_db_ctx*/ None)
+                .await?
+                .is_some(),
+            "active tree rejection must leave {thread_id} in the live collection"
+        );
+        assert!(
+            find_archived_thread_path_by_id_str(
+                codex_home.path(),
+                thread_id,
+                /*state_db_ctx*/ None,
+            )
+            .await?
+            .is_none(),
+            "active tree rejection must not partially archive {thread_id}"
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn review_start_races_archive_without_partial_mutation() -> Result<()> {
+    let server =
+        create_mock_responses_server_sequence_unchecked(vec![create_shell_command_sse_response(
+            vec!["sleep".to_string(), "5".to_string()],
+            None,
+            Some(10_000),
+            "call_active_review",
+        )?])
+        .await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+    let parent_id = create_fake_rollout(
+        codex_home.path(),
+        "2025-01-01T00-00-00",
+        "2025-01-01T00:00:00Z",
+        "parent",
+        Some("mock_provider"),
+        /*git_info*/ None,
+    )?;
+
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .without_auto_env()
+        .build()
+        .await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    let resume_id = mcp
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id: parent_id.clone(),
+            ..Default::default()
+        })
+        .await?;
+    let resume_response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(resume_id)),
+    )
+    .await??;
+    let _: ThreadResumeResponse = to_response(resume_response)?;
+    mcp.clear_message_buffer();
+
+    // Dispatch both lifecycle operations without waiting for either response.
+    // Whichever acquires the shared permit first must exclude the other.
+    let review_id = mcp
+        .send_review_start_request(ReviewStartParams {
+            thread_id: parent_id.clone(),
+            delivery: Some(ReviewDelivery::Inline),
+            target: ReviewTarget::Custom {
+                instructions: "race archive".to_string(),
+            },
+        })
+        .await?;
+    let archive_id = mcp
+        .send_thread_archive_request(ThreadArchiveParams {
+            thread_id: parent_id.clone(),
+        })
+        .await?;
+
+    let review_request_id = RequestId::Integer(review_id);
+    let archive_request_id = RequestId::Integer(archive_id);
+    let mut review_succeeded = None;
+    let mut archive_succeeded = None;
+    while review_succeeded.is_none() || archive_succeeded.is_none() {
+        let message = timeout(DEFAULT_READ_TIMEOUT, mcp.read_next_message()).await??;
+        match message {
+            JSONRPCMessage::Response(response) if response.id == review_request_id => {
+                review_succeeded = Some(true);
+            }
+            JSONRPCMessage::Error(error) if error.id == review_request_id => {
+                review_succeeded = Some(false);
+            }
+            JSONRPCMessage::Response(response) if response.id == archive_request_id => {
+                archive_succeeded = Some(true);
+            }
+            JSONRPCMessage::Error(error) if error.id == archive_request_id => {
+                archive_succeeded = Some(false);
+            }
+            _ => {}
+        }
+    }
+
+    assert_ne!(
+        review_succeeded, archive_succeeded,
+        "review/start and archive must not both succeed or both fail in the lifecycle race"
+    );
+    let active_path =
+        find_thread_path_by_id_str(codex_home.path(), &parent_id, /*state_db_ctx*/ None).await?;
+    let archived_path = find_archived_thread_path_by_id_str(
+        codex_home.path(),
+        &parent_id,
+        /*state_db_ctx*/ None,
+    )
+    .await?;
+    if review_succeeded == Some(true) {
+        assert_eq!(archive_succeeded, Some(false));
+        assert!(active_path.is_some());
+        assert!(archived_path.is_none());
+    } else {
+        assert_eq!(archive_succeeded, Some(true));
+        assert!(active_path.is_none());
+        assert!(archived_path.is_some());
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn thread_archive_succeeds_when_descendant_archive_fails() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
@@ -429,7 +657,7 @@ async fn thread_archive_succeeds_when_descendant_archive_fails() -> Result<()> {
 }
 
 #[tokio::test]
-async fn thread_archive_succeeds_when_spawned_descendant_is_missing() -> Result<()> {
+async fn thread_archive_rejects_missing_descendant_without_partial_mutation() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
@@ -470,30 +698,22 @@ async fn thread_archive_succeeds_when_spawned_descendant_is_missing() -> Result<
             thread_id: parent_id.clone(),
         })
         .await?;
-    let archive_resp: JSONRPCResponse = timeout(
+    let archive_err: JSONRPCError = timeout(
         DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(archive_id)),
+        mcp.read_stream_until_error_message(RequestId::Integer(archive_id)),
     )
     .await??;
-    let _: ThreadArchiveResponse = to_response::<ThreadArchiveResponse>(archive_resp)?;
-
-    let notification = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_notification_message("thread/archived"),
-    )
-    .await??;
-    let archived_notification: ThreadArchivedNotification = serde_json::from_value(
-        notification
-            .params
-            .expect("thread/archived notification params"),
-    )?;
-    assert_eq!(archived_notification.thread_id, parent_id);
+    assert!(
+        archive_err.error.message.contains("no rollout found"),
+        "unexpected archive error: {}",
+        archive_err.error.message
+    );
 
     assert!(
         find_thread_path_by_id_str(codex_home.path(), &parent_id, /*state_db_ctx*/ None)
             .await?
-            .is_none(),
-        "parent should be archived even when a descendant is missing"
+            .is_some(),
+        "parent must remain active when the descendant tree cannot be validated"
     );
     assert!(
         find_archived_thread_path_by_id_str(
@@ -502,8 +722,8 @@ async fn thread_archive_succeeds_when_spawned_descendant_is_missing() -> Result<
             /*state_db_ctx*/ None,
         )
         .await?
-        .is_some(),
-        "parent should be moved into archived sessions"
+        .is_none(),
+        "archive rejection must not partially move the parent"
     );
 
     Ok(())

@@ -808,6 +808,7 @@ async fn run_review_on_session(
         params.external_cancel.as_ref(),
         Box::pin(review_session.io.submit(Op::UserInput {
             items: prompt_items.items,
+            input_client_name: None,
             final_output_json_schema: Some(params.schema.clone()),
             responsesapi_client_metadata: None,
             additional_context: Default::default(),

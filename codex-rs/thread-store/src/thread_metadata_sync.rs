@@ -680,6 +680,7 @@ mod tests {
     fn user_message(message: &str) -> UserMessageEvent {
         UserMessageEvent {
             client_id: None,
+            client_name: None,
             message: message.to_string(),
             images: None,
             local_images: Vec::new(),

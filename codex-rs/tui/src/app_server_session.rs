@@ -2560,6 +2560,7 @@ mod tests {
                         codex_app_server_protocol::ThreadItem::UserMessage {
                             id: "user-1".to_string(),
                             client_id: None,
+                            client_name: None,
                             content: vec![codex_app_server_protocol::UserInput::Text {
                                 text: "hello from history".to_string(),
                                 text_elements: Vec::new(),

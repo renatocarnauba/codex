@@ -91,6 +91,7 @@ pub(crate) struct ThreadState {
     last_thread_settings: Option<ThreadSettings>,
     listener_command_tx: Option<mpsc::UnboundedSender<ThreadListenerCommand>>,
     current_turn_history: ThreadHistoryBuilder,
+    turn_client_names: HashMap<String, Option<String>>,
     listener_thread: Option<Weak<CodexThread>>,
     watch_registration: WatchRegistration,
 }
@@ -128,6 +129,7 @@ impl ThreadState {
         }
         self.listener_command_tx = None;
         self.current_turn_history.reset();
+        self.turn_client_names.clear();
         self.listener_thread = None;
         self.watch_registration = WatchRegistration::default();
     }
@@ -144,6 +146,34 @@ impl ThreadState {
 
     pub(crate) fn active_turn_snapshot(&self) -> Option<Turn> {
         self.current_turn_history.active_turn_snapshot()
+    }
+
+    pub(crate) fn record_turn_client_name(
+        &mut self,
+        turn_id: String,
+        client_name: Option<String>,
+    ) -> Option<Option<String>> {
+        self.turn_client_names.insert(turn_id, client_name)
+    }
+
+    pub(crate) fn turn_client_name(&self, turn_id: &str) -> Option<String> {
+        self.turn_client_names.get(turn_id).cloned().flatten()
+    }
+
+    pub(crate) fn restore_turn_client_name(
+        &mut self,
+        turn_id: &str,
+        previous: Option<Option<String>>,
+    ) {
+        if let Some(previous) = previous {
+            self.turn_client_names.insert(turn_id.to_string(), previous);
+        } else {
+            self.turn_client_names.remove(turn_id);
+        }
+    }
+
+    pub(crate) fn remove_turn_client_name(&mut self, turn_id: &str) {
+        self.turn_client_names.remove(turn_id);
     }
 
     pub(crate) fn track_current_turn_event(&mut self, event_turn_id: &str, event: &EventMsg) {

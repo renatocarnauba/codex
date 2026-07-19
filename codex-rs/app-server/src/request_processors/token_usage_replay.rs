@@ -149,6 +149,7 @@ mod tests {
         vec![
             RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "first turn".to_string(),
                 images: None,
                 local_images: Vec::new(),
@@ -166,6 +167,7 @@ mod tests {
             })),
             RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
                 client_id: None,
+                client_name: None,
                 message: "second turn".to_string(),
                 images: None,
                 local_images: Vec::new(),

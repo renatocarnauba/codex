@@ -228,6 +228,7 @@ mod tests {
         let mut metadata = metadata_for_test();
         let item = RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
             client_id: None,
+            client_name: None,
             message: format!("{USER_MESSAGE_BEGIN} actual user request"),
             images: Some(vec![]),
             local_images: vec![],
@@ -273,6 +274,7 @@ mod tests {
         let mut metadata = metadata_for_test();
         let item = RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
             client_id: None,
+            client_name: None,
             message: String::new(),
             images: Some(vec!["https://example.com/image.png".to_string()]),
             local_images: vec![],
@@ -292,6 +294,7 @@ mod tests {
         let mut metadata = metadata_for_test();
         let item = RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
             client_id: None,
+            client_name: None,
             message: "   ".to_string(),
             images: Some(vec![]),
             local_images: vec![],
@@ -333,6 +336,7 @@ mod tests {
 
         let user_item = RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
             client_id: None,
+            client_name: None,
             message: format!("{USER_MESSAGE_BEGIN} next normal prompt"),
             images: Some(vec![]),
             local_images: vec![],
@@ -360,6 +364,7 @@ mod tests {
             &mut metadata,
             &RolloutItem::SessionMeta(SessionMetaLine {
                 meta: SessionMeta {
+                    thread_creation_idempotency: None,
                     session_id: thread_id.into(),
                     id: thread_id,
                     forked_from_id: Some(
@@ -611,6 +616,7 @@ mod tests {
             &mut metadata,
             &RolloutItem::SessionMeta(SessionMetaLine {
                 meta: SessionMeta {
+                    thread_creation_idempotency: None,
                     session_id: thread_id.into(),
                     id: thread_id,
                     forked_from_id: None,

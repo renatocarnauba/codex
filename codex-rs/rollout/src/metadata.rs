@@ -14,6 +14,7 @@ use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionMetaLine;
 use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::ThreadCreationIdempotencyKind;
 use codex_state::BackfillState;
 use codex_state::BackfillStats;
 use codex_state::BackfillStatus;
@@ -33,6 +34,13 @@ const BACKFILL_BATCH_SIZE: usize = 200;
 const BACKFILL_LEASE_SECONDS: i64 = 900;
 #[cfg(test)]
 const BACKFILL_LEASE_SECONDS: i64 = 1;
+
+fn creation_kind(kind: ThreadCreationIdempotencyKind) -> &'static str {
+    match kind {
+        ThreadCreationIdempotencyKind::Start => "start",
+        ThreadCreationIdempotencyKind::Fork => "fork",
+    }
+}
 
 pub(crate) fn builder_from_session_meta(
     session_meta: &SessionMetaLine,
@@ -248,7 +256,8 @@ pub(crate) async fn backfill_sessions_with_lease(
         failed: 0,
     };
     let mut last_watermark = backfill_state.last_watermark.clone();
-    for batch in rollout_paths.chunks(BACKFILL_BATCH_SIZE) {
+    let mut fatal_creation_binding_error = false;
+    'batches: for batch in rollout_paths.chunks(BACKFILL_BATCH_SIZE) {
         for rollout in batch {
             stats.scanned = stats.scanned.saturating_add(1);
             match extract_metadata_from_rollout(&rollout.path, default_provider).await {
@@ -290,6 +299,26 @@ pub(crate) async fn backfill_sessions_with_lease(
                             );
                             continue;
                         }
+                        if let Ok(meta_line) = crate::read_session_meta_line(&rollout.path).await
+                            && let Some(idempotency) =
+                                meta_line.meta.thread_creation_idempotency.as_deref()
+                            && let Err(err) = runtime
+                                .backfill_thread_creation_idempotency(
+                                    meta_line.meta.originator.as_str(),
+                                    idempotency.key.as_str(),
+                                    creation_kind(idempotency.kind),
+                                    meta_line.meta.id,
+                                )
+                                .await
+                        {
+                            stats.failed = stats.failed.saturating_add(1);
+                            warn!(
+                                "duplicate or invalid thread creation idempotency binding in {}: {err}",
+                                rollout.path.display()
+                            );
+                            fatal_creation_binding_error = true;
+                            break 'batches;
+                        }
                         stats.upserted = stats.upserted.saturating_add(1);
                     }
                 }
@@ -316,6 +345,12 @@ pub(crate) async fn backfill_sessions_with_lease(
                 last_watermark = Some(last_entry.watermark.clone());
             }
         }
+    }
+    if fatal_creation_binding_error {
+        warn!(
+            "state db backfill left running because creation idempotency bindings are inconsistent"
+        );
+        return;
     }
     if let Err(err) = runtime
         .mark_backfill_complete(last_watermark.as_deref())

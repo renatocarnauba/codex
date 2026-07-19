@@ -80,6 +80,7 @@ impl UserMessageItem {
         // rebase text element ranges onto that concatenated text.
         UserMessageEvent {
             client_id: self.client_id.clone(),
+            client_name: self.client_name.clone(),
             message: self.message(),
             images: Some(self.image_urls()),
             image_details: self.image_details(),

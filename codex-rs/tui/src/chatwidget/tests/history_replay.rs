@@ -234,6 +234,7 @@ async fn replayed_nested_review_prompts_do_not_render_or_seed_composer_history()
     let user_message = |id: &str, text: &str| AppServerThreadItem::UserMessage {
         id: id.to_string(),
         client_id: None,
+        client_name: None,
         content: vec![AppServerUserInput::Text {
             text: text.to_string(),
             text_elements: Vec::new(),

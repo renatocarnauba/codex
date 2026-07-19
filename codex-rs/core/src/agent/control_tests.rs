@@ -941,6 +941,7 @@ async fn spawn_agent_fork_from_paginated_parent_uses_model_context_prefix() {
                 item: TurnItem::UserMessage(UserMessageItem {
                     id: "parent-user".to_string(),
                     client_id: None,
+                    client_name: None,
                     content: Vec::new(),
                 }),
                 completed_at_ms: 1,

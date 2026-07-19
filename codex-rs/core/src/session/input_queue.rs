@@ -14,6 +14,7 @@ pub(crate) enum TurnInput {
     UserInput {
         content: Vec<UserInput>,
         client_id: Option<String>,
+        client_name: Option<String>,
     },
     ResponseItem(ResponseItem),
     InterAgentCommunication(InterAgentCommunication),
