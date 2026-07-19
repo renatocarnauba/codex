@@ -912,6 +912,14 @@
             "null"
           ]
         },
+        "originator": {
+          "default": null,
+          "description": "Effective client originator persisted when this thread was created. Legacy threads whose metadata predates this field may report `null`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "parentThreadId": {
           "description": "The ID of the parent thread. This will only be set if this thread is a subagent.",
           "type": [

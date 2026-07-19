@@ -11749,6 +11749,13 @@
       "ItemStartedNotification": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
+          "clientName": {
+            "description": "Current app-server connection client when this item started.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "item": {
             "$ref": "#/definitions/v2/ThreadItem"
           },
@@ -17830,6 +17837,14 @@
               "null"
             ]
           },
+          "originator": {
+            "default": null,
+            "description": "Effective client originator persisted when this thread was created. Legacy threads whose metadata predates this field may report `null`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "parentThreadId": {
             "description": "The ID of the parent thread. This will only be set if this thread is a subagent.",
             "type": [
@@ -21132,6 +21147,13 @@
       "TurnStartedNotification": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
+          "clientName": {
+            "description": "Name supplied by the app-server connection that started this turn.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "threadId": {
             "type": "string"
           },

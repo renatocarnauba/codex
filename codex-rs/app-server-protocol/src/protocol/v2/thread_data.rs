@@ -208,6 +208,10 @@ pub struct Thread {
     pub cli_version: String,
     /// Origin of the thread (CLI, VSCode, codex exec, codex app-server, etc.).
     pub source: SessionSource,
+    /// Effective client originator persisted when this thread was created.
+    /// Legacy threads whose metadata predates this field may report `null`.
+    #[serde(default)]
+    pub originator: Option<String>,
     /// Whether the app server accepts direct turn input for this loaded thread.
     /// `None` means the capability is unavailable, such as for an unloaded stored thread.
     #[experimental("thread.canAcceptDirectInput")]

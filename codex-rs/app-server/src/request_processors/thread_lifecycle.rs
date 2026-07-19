@@ -153,6 +153,17 @@ pub(super) async fn ensure_conversation_listener(
             )));
         }
     };
+    let config_snapshot = conversation.config_snapshot().await;
+    if config_snapshot.has_dynamic_tools {
+        listener_task_context
+            .thread_state_manager
+            .register_persisted_dynamic_tool_owner_if_matches(
+                conversation_id,
+                connection_id,
+                &config_snapshot.originator,
+            )
+            .await;
+    }
     let thread_state = {
         let pending_thread_unloads = listener_task_context.pending_thread_unloads.lock().await;
         if pending_thread_unloads.contains(&conversation_id) {
@@ -337,6 +348,7 @@ pub(super) async fn ensure_listener_task_running(
                         conversation_id,
                         conversation.clone(),
                         thread_manager.clone(),
+                        thread_state_manager.clone(),
                         thread_outgoing,
                         thread_state.clone(),
                         thread_watch_manager.clone(),
@@ -741,8 +753,16 @@ pub(super) async fn handle_pending_thread_resume_request(
             );
         }
     }
+    let replay_dynamic_tools = thread_state_manager
+        .connection_owns_dynamic_tools(conversation_id, connection_id)
+        .await
+        .unwrap_or(true);
     outgoing
-        .replay_requests_to_connection_for_thread(connection_id, conversation_id)
+        .replay_requests_to_connection_for_thread(
+            connection_id,
+            conversation_id,
+            replay_dynamic_tools,
+        )
         .await;
     // App-server owns resume response and snapshot ordering, so wait until
     // replay completes before letting extensions react to the idle thread.

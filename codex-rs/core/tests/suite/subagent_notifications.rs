@@ -805,6 +805,7 @@ async fn subagent_stop_replaces_stop_and_skips_internal_subagents() -> Result<()
             thread_source: None,
             dynamic_tools: Vec::new(),
             metrics_service_name: None,
+            connection_originator: None,
             parent_trace: None,
             environments: Vec::new(),
             thread_extension_init: Default::default(),

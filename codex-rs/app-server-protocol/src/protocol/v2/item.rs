@@ -1229,6 +1229,8 @@ pub struct ItemStartedNotification {
     pub item: ThreadItem,
     pub thread_id: String,
     pub turn_id: String,
+    /// Current app-server connection client when this item started.
+    pub client_name: Option<String>,
     /// Unix timestamp (in milliseconds) when this item lifecycle started.
     #[ts(type = "number")]
     pub started_at_ms: i64,

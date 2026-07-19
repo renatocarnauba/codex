@@ -2653,6 +2653,7 @@ mod tests {
                     cwd: cwd.clone(),
                     cli_version: "0.0.0".to_string(),
                     source: v2::SessionSource::Exec,
+                    originator: Some("codex_exec".to_string()),
                     can_accept_direct_input: None,
                     thread_source: None,
                     agent_nickname: None,

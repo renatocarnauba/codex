@@ -91,6 +91,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item,
+                client_name: None,
                 started_at_ms: begin_event.started_at_ms,
             })
         }
@@ -150,6 +151,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item,
+                client_name: None,
                 started_at_ms: begin_event.started_at_ms,
             })
         }
@@ -216,6 +218,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item,
+                client_name: None,
                 started_at_ms: begin_event.started_at_ms,
             })
         }
@@ -271,6 +274,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item,
+                client_name: None,
                 started_at_ms: begin_event.started_at_ms,
             })
         }
@@ -323,6 +327,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item,
+                client_name: None,
                 started_at_ms: begin_event.started_at_ms,
             })
         }
@@ -406,6 +411,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item: item_started_event.item.into(),
+                client_name: None,
                 started_at_ms: item_started_event.started_at_ms,
             })
         }
@@ -430,6 +436,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item: build_command_execution_begin_item(&exec_command_begin_event),
+                client_name: None,
                 started_at_ms: exec_command_begin_event.started_at_ms,
             })
         }
@@ -529,6 +536,7 @@ mod tests {
             ItemStartedNotification {
                 thread_id: "thread-1".to_string(),
                 turn_id: "turn-1".to_string(),
+                client_name: None,
                 started_at_ms: event.started_at_ms,
                 item: ThreadItem::CollabAgentToolCall {
                     id: event.call_id,

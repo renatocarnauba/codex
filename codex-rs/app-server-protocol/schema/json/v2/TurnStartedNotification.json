@@ -1866,6 +1866,13 @@
     }
   },
   "properties": {
+    "clientName": {
+      "description": "Name supplied by the app-server connection that started this turn.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "threadId": {
       "type": "string"
     },

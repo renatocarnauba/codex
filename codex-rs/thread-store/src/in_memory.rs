@@ -817,6 +817,7 @@ fn stored_thread_from_state(
         source: metadata
             .and_then(|metadata| metadata.source.clone())
             .unwrap_or_else(|| created.source.clone()),
+        originator: (!created.originator.is_empty()).then_some(created.originator.clone()),
         history_mode: created.history_mode,
         thread_source: metadata
             .and_then(|metadata| metadata.thread_source.clone())

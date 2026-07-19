@@ -1250,6 +1250,7 @@ impl ThreadRequestProcessor {
                 thread_source,
                 dynamic_tools,
                 metrics_service_name: service_name,
+                connection_originator: app_server_client_name.clone(),
                 parent_trace: request_trace,
                 environments,
                 thread_extension_init,
@@ -1272,6 +1273,12 @@ impl ThreadRequestProcessor {
             create_thread_started_at.elapsed(),
             Some("ready"),
         );
+        if dynamic_tool_count > 0 {
+            listener_task_context
+                .thread_state_manager
+                .register_dynamic_tool_owner(thread_id, request_id.connection_id)
+                .await;
+        }
 
         Self::set_app_server_client_info(
             thread.as_ref(),
@@ -5001,6 +5008,7 @@ pub(crate) fn thread_from_stored_thread(
         agent_nickname: source.get_nickname(),
         agent_role: source.get_agent_role(),
         source: source.into(),
+        originator: thread.originator,
         can_accept_direct_input: None,
         thread_source: thread.thread_source.map(Into::into),
         git_info,
@@ -5208,6 +5216,8 @@ fn build_thread_from_snapshot(
         agent_nickname: config_snapshot.session_source.get_nickname(),
         agent_role: config_snapshot.session_source.get_agent_role(),
         source: config_snapshot.session_source.clone().into(),
+        originator: (!config_snapshot.originator.is_empty())
+            .then_some(config_snapshot.originator.clone()),
         can_accept_direct_input: Some(can_accept_direct_input(
             multi_agent_version,
             &config_snapshot.session_source,

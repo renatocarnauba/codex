@@ -196,6 +196,9 @@ pub struct StartThreadOptions {
     pub thread_source: Option<ThreadSource>,
     pub dynamic_tools: Vec<codex_protocol::dynamic_tools::DynamicToolSpec>,
     pub metrics_service_name: Option<String>,
+    /// Originator reported by the app-server connection that owns this request.
+    /// This stays connection-scoped when multiple clients share one server.
+    pub connection_originator: Option<String>,
     pub parent_trace: Option<W3cTraceContext>,
     pub environments: Vec<TurnEnvironmentSelection>,
     pub thread_extension_init: ExtensionDataInit,
@@ -220,6 +223,7 @@ fn originator_from_service_name(service_name: Option<&str>) -> Option<String> {
 
 fn effective_originator_value(
     metrics_service_name: Option<&str>,
+    connection_originator: Option<String>,
     env_originator: Option<String>,
     persisted_originator: Option<String>,
     inherited_originator: Option<String>,
@@ -229,6 +233,7 @@ fn effective_originator_value(
         .or(persisted_originator)
         .or(inherited_originator)
         .or(env_originator)
+        .or(connection_originator)
         .unwrap_or(default_originator)
 }
 
@@ -686,6 +691,7 @@ impl ThreadManager {
             thread_source: None,
             dynamic_tools,
             metrics_service_name: None,
+            connection_originator: None,
             parent_trace: None,
             environments,
             thread_extension_init: ExtensionDataInit::default(),
@@ -727,6 +733,7 @@ impl ThreadManager {
             thread_source,
             options.dynamic_tools,
             options.metrics_service_name,
+            options.connection_originator,
             /*inherited_environments*/ None,
             /*inherited_exec_policy*/ None,
             options.parent_trace,
@@ -833,6 +840,7 @@ impl ThreadManager {
             thread_source,
             Vec::new(),
             /*metrics_service_name*/ None,
+            /*connection_originator*/ None,
             /*inherited_environments*/ None,
             /*inherited_exec_policy*/ None,
             parent_trace,
@@ -866,6 +874,7 @@ impl ThreadManager {
             /*thread_source*/ None,
             Vec::new(),
             /*metrics_service_name*/ None,
+            /*connection_originator*/ None,
             /*parent_trace*/ None,
             environments,
             /*thread_extension_init*/ ExtensionDataInit::default(),
@@ -906,6 +915,7 @@ impl ThreadManager {
             thread_source,
             Vec::new(),
             /*metrics_service_name*/ None,
+            /*connection_originator*/ None,
             /*inherited_environments*/ None,
             /*inherited_exec_policy*/ None,
             /*parent_trace*/ None,
@@ -1090,6 +1100,7 @@ impl ThreadManager {
             thread_source,
             Vec::new(),
             /*metrics_service_name*/ None,
+            /*connection_originator*/ None,
             parent_trace,
             environments,
             /*thread_extension_init*/ ExtensionDataInit::default(),
@@ -1342,6 +1353,7 @@ impl ThreadManagerState {
         &self,
         initial_history: &InitialHistory,
         metrics_service_name: Option<&str>,
+        connection_originator: Option<String>,
         session_source: &SessionSource,
         parent_thread_id: Option<ThreadId>,
         forked_from_thread_id: Option<ThreadId>,
@@ -1372,6 +1384,7 @@ impl ThreadManagerState {
             .then(|| originator().value);
         effective_originator_value(
             metrics_service_name,
+            connection_originator,
             env_originator,
             persisted_originator,
             inherited_originator,
@@ -1394,6 +1407,7 @@ impl ThreadManagerState {
             /*forked_from_thread_id*/ None,
             /*thread_source*/ None,
             /*metrics_service_name*/ None,
+            /*connection_originator*/ None,
             /*inherited_environments*/ None,
             /*inherited_exec_policy*/ None,
             /*environments*/ None,
@@ -1412,6 +1426,7 @@ impl ThreadManagerState {
         forked_from_thread_id: Option<ThreadId>,
         thread_source: Option<ThreadSource>,
         metrics_service_name: Option<String>,
+        connection_originator: Option<String>,
         inherited_environments: Option<TurnEnvironmentSnapshot>,
         inherited_exec_policy: Option<Arc<crate::exec_policy::ExecPolicyManager>>,
         environments: Option<Vec<TurnEnvironmentSelection>>,
@@ -1436,6 +1451,7 @@ impl ThreadManagerState {
             thread_source,
             Vec::new(),
             metrics_service_name,
+            connection_originator,
             inherited_environments,
             inherited_exec_policy,
             /*parent_trace*/ None,
@@ -1479,6 +1495,7 @@ impl ThreadManagerState {
             thread_source,
             Vec::new(),
             /*metrics_service_name*/ None,
+            /*connection_originator*/ None,
             inherited_environments,
             inherited_exec_policy,
             /*parent_trace*/ None,
@@ -1526,6 +1543,7 @@ impl ThreadManagerState {
             thread_source,
             Vec::new(),
             /*metrics_service_name*/ None,
+            /*connection_originator*/ None,
             inherited_environments,
             inherited_exec_policy,
             /*parent_trace*/ None,
@@ -1550,6 +1568,7 @@ impl ThreadManagerState {
         thread_source: Option<ThreadSource>,
         dynamic_tools: Vec<codex_protocol::dynamic_tools::DynamicToolSpec>,
         metrics_service_name: Option<String>,
+        connection_originator: Option<String>,
         parent_trace: Option<W3cTraceContext>,
         environments: Vec<TurnEnvironmentSelection>,
         thread_extension_init: ExtensionDataInit,
@@ -1569,6 +1588,7 @@ impl ThreadManagerState {
             thread_source,
             dynamic_tools,
             metrics_service_name,
+            connection_originator,
             /*inherited_environments*/ None,
             /*inherited_exec_policy*/ None,
             parent_trace,
@@ -1595,6 +1615,7 @@ impl ThreadManagerState {
         thread_source: Option<ThreadSource>,
         dynamic_tools: Vec<codex_protocol::dynamic_tools::DynamicToolSpec>,
         metrics_service_name: Option<String>,
+        connection_originator: Option<String>,
         inherited_environments: Option<TurnEnvironmentSnapshot>,
         inherited_exec_policy: Option<Arc<crate::exec_policy::ExecPolicyManager>>,
         parent_trace: Option<W3cTraceContext>,
@@ -1644,6 +1665,7 @@ impl ThreadManagerState {
             .effective_originator(
                 &initial_history,
                 metrics_service_name.as_deref(),
+                connection_originator,
                 &session_source,
                 parent_thread_id,
                 forked_from_thread_id,

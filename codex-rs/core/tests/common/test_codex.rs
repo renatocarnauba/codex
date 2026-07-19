@@ -715,6 +715,7 @@ impl TestCodexBuilder {
                         thread_source: None,
                         dynamic_tools: Vec::new(),
                         metrics_service_name: None,
+                        connection_originator: None,
                         parent_trace: None,
                         environments,
                         thread_extension_init: Default::default(),

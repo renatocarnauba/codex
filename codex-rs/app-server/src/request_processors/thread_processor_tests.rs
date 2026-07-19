@@ -483,6 +483,7 @@ mod thread_processor_behavior_tests {
             cwd: PathBuf::from("/tmp"),
             cli_version: "0.0.0".to_string(),
             source: SessionSource::Cli,
+            originator: Some("codex_cli_rs".to_string()),
             history_mode: Default::default(),
             thread_source: Some(codex_protocol::protocol::ThreadSource::User),
             agent_nickname: None,
@@ -783,6 +784,9 @@ mod thread_processor_behavior_tests {
             parent_thread_id: None,
             thread_source: None,
             originator: "test_originator".to_string(),
+            app_server_client_name: None,
+            app_server_client_version: None,
+            has_dynamic_tools: false,
         };
 
         assert_eq!(
@@ -1455,6 +1459,7 @@ mod thread_processor_behavior_tests {
                 unrelated_supported_connection,
                 ConnectionCapabilities {
                     request_attestation: true,
+                    ..Default::default()
                 },
             )
             .await;
@@ -1463,6 +1468,7 @@ mod thread_processor_behavior_tests {
                 earlier_supported_connection,
                 ConnectionCapabilities {
                     request_attestation: true,
+                    ..Default::default()
                 },
             )
             .await;
@@ -1471,6 +1477,7 @@ mod thread_processor_behavior_tests {
                 later_supported_connection,
                 ConnectionCapabilities {
                     request_attestation: true,
+                    ..Default::default()
                 },
             )
             .await;

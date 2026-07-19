@@ -377,6 +377,10 @@ async fn stored_thread_from_sqlite_metadata(
         cwd: metadata.cwd,
         cli_version: metadata.cli_version,
         source: parse_session_source(&metadata.source),
+        originator: session_meta
+            .as_ref()
+            .map(|meta| meta.originator.clone())
+            .filter(|originator| !originator.is_empty()),
         history_mode,
         thread_source: metadata.thread_source,
         agent_nickname: metadata.agent_nickname,
@@ -451,6 +455,7 @@ fn stored_thread_from_meta_line(
         cwd: meta_line.meta.cwd,
         cli_version: meta_line.meta.cli_version,
         source: meta_line.meta.source,
+        originator: (!meta_line.meta.originator.is_empty()).then_some(meta_line.meta.originator),
         history_mode: meta_line.meta.history_mode,
         thread_source: meta_line.meta.thread_source,
         agent_nickname: meta_line.meta.agent_nickname,

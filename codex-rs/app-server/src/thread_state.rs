@@ -257,6 +257,8 @@ mod tests {
 struct ThreadEntry {
     state: Arc<Mutex<ThreadState>>,
     connection_ids: HashSet<ConnectionId>,
+    dynamic_tool_owner_client_name: Option<String>,
+    dynamic_tool_owner_connection_id: Option<ConnectionId>,
     has_connections_watcher: watch::Sender<bool>,
 }
 
@@ -265,6 +267,8 @@ impl Default for ThreadEntry {
         Self {
             state: Arc::new(Mutex::new(ThreadState::default())),
             connection_ids: HashSet::new(),
+            dynamic_tool_owner_client_name: None,
+            dynamic_tool_owner_connection_id: None,
             has_connections_watcher: watch::channel(false).0,
         }
     }
@@ -287,9 +291,10 @@ struct ThreadStateManagerInner {
     thread_ids_by_connection: HashMap<ConnectionId, HashSet<ThreadId>>,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub(crate) struct ConnectionCapabilities {
     pub(crate) request_attestation: bool,
+    pub(crate) client_name: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -362,6 +367,95 @@ impl ThreadStateManager {
             .get(&thread_id)
             .map(|thread_entry| thread_entry.connection_ids.iter().copied().collect())
             .unwrap_or_default()
+    }
+
+    /// Associates dynamic tools with the app-server connection that registered them.
+    pub(crate) async fn register_dynamic_tool_owner(
+        &self,
+        thread_id: ThreadId,
+        connection_id: ConnectionId,
+    ) {
+        let mut state = self.state.lock().await;
+        let client_name = state
+            .live_connections
+            .get(&connection_id)
+            .and_then(|capabilities| capabilities.client_name.clone());
+        let thread_entry = state.threads.entry(thread_id).or_default();
+        thread_entry.dynamic_tool_owner_client_name = client_name;
+        thread_entry.dynamic_tool_owner_connection_id = Some(connection_id);
+    }
+
+    /// Restores dynamic-tool ownership after a daemon restart when the persisted
+    /// thread originator matches the reconnecting app-server client.
+    pub(crate) async fn register_persisted_dynamic_tool_owner_if_matches(
+        &self,
+        thread_id: ThreadId,
+        connection_id: ConnectionId,
+        persisted_originator: &str,
+    ) {
+        let mut state = self.state.lock().await;
+        let client_name = state
+            .live_connections
+            .get(&connection_id)
+            .and_then(|capabilities| capabilities.client_name.clone());
+        let thread_entry = state.threads.entry(thread_id).or_default();
+        if thread_entry.dynamic_tool_owner_client_name.is_none()
+            && client_name.as_deref() == Some(persisted_originator)
+        {
+            thread_entry.dynamic_tool_owner_client_name = client_name;
+            thread_entry.dynamic_tool_owner_connection_id = Some(connection_id);
+        }
+    }
+
+    /// Returns `None` for legacy threads with no recorded owner. `Some([])` means
+    /// the owner is known but currently disconnected, so callers must not broadcast.
+    pub(crate) async fn dynamic_tool_connection_ids(
+        &self,
+        thread_id: ThreadId,
+    ) -> Option<Vec<ConnectionId>> {
+        let mut state = self.state.lock().await;
+        let owner_client_name = state
+            .threads
+            .get(&thread_id)?
+            .dynamic_tool_owner_client_name
+            .clone();
+        let owner_connection_id = state
+            .threads
+            .get(&thread_id)?
+            .dynamic_tool_owner_connection_id;
+        let subscribed_connection_ids = state.threads.get(&thread_id)?.connection_ids.clone();
+
+        let resolved_connection_id = owner_connection_id
+            .filter(|connection_id| subscribed_connection_ids.contains(connection_id))
+            .filter(|connection_id| state.live_connections.contains_key(connection_id))
+            .or_else(|| {
+                let owner_client_name = owner_client_name.as_deref()?;
+                subscribed_connection_ids
+                    .iter()
+                    .filter(|connection_id| {
+                        state
+                            .live_connections
+                            .get(connection_id)
+                            .and_then(|capabilities| capabilities.client_name.as_deref())
+                            == Some(owner_client_name)
+                    })
+                    .min_by_key(|connection_id| connection_id.0)
+                    .copied()
+            });
+        if let Some(thread_entry) = state.threads.get_mut(&thread_id) {
+            thread_entry.dynamic_tool_owner_connection_id = resolved_connection_id;
+        }
+        Some(resolved_connection_id.into_iter().collect())
+    }
+
+    pub(crate) async fn connection_owns_dynamic_tools(
+        &self,
+        thread_id: ThreadId,
+        connection_id: ConnectionId,
+    ) -> Option<bool> {
+        self.dynamic_tool_connection_ids(thread_id)
+            .await
+            .map(|connection_ids| connection_ids.contains(&connection_id))
     }
 
     pub(crate) async fn thread_state(&self, thread_id: ThreadId) -> Arc<Mutex<ThreadState>> {
@@ -477,6 +571,9 @@ impl ThreadStateManager {
             }
             if let Some(thread_entry) = state.threads.get_mut(&thread_id) {
                 thread_entry.connection_ids.remove(&connection_id);
+                if thread_entry.dynamic_tool_owner_connection_id == Some(connection_id) {
+                    thread_entry.dynamic_tool_owner_connection_id = None;
+                }
                 thread_entry.update_has_connections();
             }
         };
@@ -510,8 +607,15 @@ impl ThreadStateManager {
                 .entry(connection_id)
                 .or_default()
                 .insert(thread_id);
+            let client_name = state
+                .live_connections
+                .get(&connection_id)
+                .and_then(|capabilities| capabilities.client_name.clone());
             let thread_entry = state.threads.entry(thread_id).or_default();
             thread_entry.connection_ids.insert(connection_id);
+            if thread_entry.dynamic_tool_owner_client_name.as_deref() == client_name.as_deref() {
+                thread_entry.dynamic_tool_owner_connection_id = Some(connection_id);
+            }
             thread_entry.update_has_connections();
             thread_entry.state.clone()
         };
@@ -538,8 +642,15 @@ impl ThreadStateManager {
             .entry(connection_id)
             .or_default()
             .insert(thread_id);
+        let client_name = state
+            .live_connections
+            .get(&connection_id)
+            .and_then(|capabilities| capabilities.client_name.clone());
         let thread_entry = state.threads.entry(thread_id).or_default();
         thread_entry.connection_ids.insert(connection_id);
+        if thread_entry.dynamic_tool_owner_client_name.as_deref() == client_name.as_deref() {
+            thread_entry.dynamic_tool_owner_connection_id = Some(connection_id);
+        }
         thread_entry.update_has_connections();
         true
     }
@@ -555,6 +666,9 @@ impl ThreadStateManager {
             for thread_id in &thread_ids {
                 if let Some(thread_entry) = state.threads.get_mut(thread_id) {
                     thread_entry.connection_ids.remove(&connection_id);
+                    if thread_entry.dynamic_tool_owner_connection_id == Some(connection_id) {
+                        thread_entry.dynamic_tool_owner_connection_id = None;
+                    }
                     thread_entry.update_has_connections();
                 }
             }

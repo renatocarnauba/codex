@@ -213,6 +213,9 @@ impl SessionConfiguration {
             parent_thread_id: self.parent_thread_id,
             thread_source: self.thread_source.clone(),
             originator: self.originator.clone(),
+            app_server_client_name: self.app_server_client_name.clone(),
+            app_server_client_version: self.app_server_client_version.clone(),
+            has_dynamic_tools: !self.dynamic_tools.is_empty(),
         }
     }
 

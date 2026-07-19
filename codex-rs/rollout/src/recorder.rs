@@ -1185,6 +1185,7 @@ fn fill_missing_thread_item_metadata(item: &mut ThreadItem, state_item: ThreadIt
         git_sha,
         git_origin_url,
         source,
+        originator,
         history_mode: _,
         parent_thread_id,
         agent_nickname,
@@ -1204,6 +1205,9 @@ fn fill_missing_thread_item_metadata(item: &mut ThreadItem, state_item: ThreadIt
     }
     if item.cwd.is_none() {
         item.cwd = cwd;
+    }
+    if item.originator.is_none() {
+        item.originator = originator;
     }
     if git_branch.is_some() {
         item.git_branch = git_branch;
@@ -1937,6 +1941,7 @@ fn thread_item_from_state_metadata(
                 .or_else(|_| serde_json::from_value(Value::String(item.source)))
                 .unwrap_or(SessionSource::Unknown),
         ),
+        originator: None,
         history_mode: item.history_mode,
         parent_thread_id,
         agent_nickname: item.agent_nickname,

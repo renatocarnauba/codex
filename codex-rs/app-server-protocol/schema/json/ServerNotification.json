@@ -2389,6 +2389,13 @@
     },
     "ItemStartedNotification": {
       "properties": {
+        "clientName": {
+          "description": "Current app-server connection client when this item started.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "item": {
           "$ref": "#/definitions/ThreadItem"
         },
@@ -3769,6 +3776,14 @@
         },
         "name": {
           "description": "Optional user-facing thread title.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "originator": {
+          "default": null,
+          "description": "Effective client originator persisted when this thread was created. Legacy threads whose metadata predates this field may report `null`.",
           "type": [
             "string",
             "null"
@@ -5468,6 +5483,13 @@
     },
     "TurnStartedNotification": {
       "properties": {
+        "clientName": {
+          "description": "Name supplied by the app-server connection that started this turn.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "threadId": {
           "type": "string"
         },

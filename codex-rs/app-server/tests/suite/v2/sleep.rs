@@ -124,6 +124,7 @@ async fn external_sleep_polls_current_time_and_emits_items() -> Result<()> {
             item: expected_item.clone(),
             thread_id: thread.id.clone(),
             turn_id: turn.id.clone(),
+            client_name: started.client_name.clone(),
             started_at_ms: started.started_at_ms,
         }
     );

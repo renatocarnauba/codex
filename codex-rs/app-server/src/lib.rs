@@ -1033,6 +1033,10 @@ pub async fn run_main_with_transport_options(
                                                     connection_state
                                                         .session
                                                         .request_attestation(),
+                                                    connection_state
+                                                        .session
+                                                        .app_server_client_name()
+                                                        .map(str::to_string),
                                                 )
                                                 .await;
                                             connection_state

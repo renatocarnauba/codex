@@ -390,6 +390,8 @@ impl UserInput {
 pub struct TurnStartedNotification {
     pub thread_id: String,
     pub turn: Turn,
+    /// Name supplied by the app-server connection that started this turn.
+    pub client_name: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

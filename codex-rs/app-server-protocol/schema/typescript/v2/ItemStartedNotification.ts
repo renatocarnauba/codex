@@ -5,6 +5,10 @@ import type { ThreadItem } from "./ThreadItem";
 
 export type ItemStartedNotification = { item: ThreadItem, threadId: string, turnId: string,
 /**
+ * Current app-server connection client when this item started.
+ */
+clientName: string | null,
+/**
  * Unix timestamp (in milliseconds) when this item lifecycle started.
  */
 startedAtMs: number, };

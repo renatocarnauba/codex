@@ -214,11 +214,18 @@ impl TurnRequestProcessor {
         &self,
         request_id: &ConnectionRequestId,
         params: TurnSteerParams,
+        app_server_client_name: Option<String>,
+        app_server_client_version: Option<String>,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
         validate_user_input_image_urls(&params.input)?;
-        self.turn_steer_inner(request_id, params)
-            .await
-            .map(|response| Some(response.into()))
+        self.turn_steer_inner(
+            request_id,
+            params,
+            app_server_client_name,
+            app_server_client_version,
+        )
+        .await
+        .map(|response| Some(response.into()))
     }
 
     pub(crate) async fn turn_interrupt(
@@ -920,6 +927,8 @@ impl TurnRequestProcessor {
         &self,
         request_id: &ConnectionRequestId,
         params: TurnSteerParams,
+        app_server_client_name: Option<String>,
+        app_server_client_version: Option<String>,
     ) -> Result<TurnSteerResponse, JSONRPCErrorError> {
         let (_, thread) = self
             .load_thread(&params.thread_id)
@@ -929,6 +938,16 @@ impl TurnRequestProcessor {
             })?;
         self.ensure_direct_input_allowed(request_id, thread.as_ref())
             .await?;
+
+        Self::set_app_server_client_info(
+            thread.as_ref(),
+            app_server_client_name,
+            app_server_client_version,
+        )
+        .await
+        .inspect_err(|error| {
+            self.track_error_response(request_id, error, /*error_type*/ None);
+        })?;
 
         if params.expected_turn_id.is_empty() {
             return Err(invalid_request("expectedTurnId must not be empty"));

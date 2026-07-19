@@ -1591,6 +1591,13 @@
     }
   },
   "properties": {
+    "clientName": {
+      "description": "Current app-server connection client when this item started.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "item": {
       "$ref": "#/definitions/ThreadItem"
     },

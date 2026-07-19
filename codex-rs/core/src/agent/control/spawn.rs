@@ -466,6 +466,7 @@ impl AgentControl {
                     /*forked_from_thread_id*/ None,
                     /*thread_source*/ Some(ThreadSource::Subagent),
                     /*metrics_service_name*/ None,
+                    /*connection_originator*/ None,
                     inheritance.environments,
                     inheritance.exec_policy,
                     options.environments.clone(),

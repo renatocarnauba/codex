@@ -143,6 +143,7 @@ async fn spawn_v2_subagent(
             /*forked_from_thread_id*/ None,
             Some(ThreadSource::Subagent),
             /*metrics_service_name*/ None,
+            /*connection_originator*/ None,
             /*inherited_environments*/ None,
             /*inherited_exec_policy*/ None,
             /*environments*/ None,

@@ -81,6 +81,9 @@ pub struct ThreadConfigSnapshot {
     pub parent_thread_id: Option<ThreadId>,
     pub thread_source: Option<ThreadSource>,
     pub originator: String,
+    pub app_server_client_name: Option<String>,
+    pub app_server_client_version: Option<String>,
+    pub has_dynamic_tools: bool,
 }
 
 /// Explains why `CodexThread::try_start_turn_if_idle` rejected an automatic

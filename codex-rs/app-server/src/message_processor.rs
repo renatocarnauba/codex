@@ -660,12 +660,14 @@ impl MessageProcessor {
         &self,
         connection_id: ConnectionId,
         request_attestation: bool,
+        client_name: Option<String>,
     ) {
         self.thread_processor
             .connection_initialized(
                 connection_id,
                 ConnectionCapabilities {
                     request_attestation,
+                    client_name,
                 },
             )
             .await;
@@ -780,6 +782,7 @@ impl MessageProcessor {
                         connection_id,
                         ConnectionCapabilities {
                             request_attestation: session.request_attestation(),
+                            client_name: session.app_server_client_name().map(str::to_string),
                         },
                     )
                     .await;
@@ -1277,7 +1280,14 @@ impl MessageProcessor {
                 self.turn_processor.thread_inject_items(params).await
             }
             ClientRequest::TurnSteer { params, .. } => {
-                self.turn_processor.turn_steer(&request_id, params).await
+                self.turn_processor
+                    .turn_steer(
+                        &request_id,
+                        params,
+                        app_server_client_name.clone(),
+                        client_version.clone(),
+                    )
+                    .await
             }
             ClientRequest::TurnInterrupt { params, .. } => {
                 self.turn_processor

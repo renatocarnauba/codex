@@ -77,6 +77,7 @@ impl AgentRunner {
                     thread_source: None,
                     dynamic_tools: Vec::new(),
                     metrics_service_name: None,
+                    connection_originator: None,
                     parent_trace: parent_trace.clone(),
                     environments,
                     thread_extension_init: Default::default(),

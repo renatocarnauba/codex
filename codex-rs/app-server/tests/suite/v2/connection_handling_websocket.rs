@@ -2,25 +2,42 @@ use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
 use app_test_support::DISABLE_PLUGIN_STARTUP_TASKS_ARG;
+use app_test_support::create_final_assistant_message_sse_response;
 use app_test_support::create_mock_responses_server_sequence_unchecked;
+use app_test_support::create_shell_command_sse_response;
 use app_test_support::to_response;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use codex_app_server_protocol::ClientInfo;
 use codex_app_server_protocol::ConfigWarningNotification;
+use codex_app_server_protocol::DynamicToolCallOutputContentItem;
+use codex_app_server_protocol::DynamicToolCallResponse;
+use codex_app_server_protocol::InitializeCapabilities;
 use codex_app_server_protocol::InitializeParams;
+use codex_app_server_protocol::ItemStartedNotification;
 use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCMessage;
 use codex_app_server_protocol::JSONRPCNotification;
 use codex_app_server_protocol::JSONRPCRequest;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
+use codex_app_server_protocol::ThreadListResponse;
 use codex_app_server_protocol::ThreadLoadedListParams;
 use codex_app_server_protocol::ThreadLoadedListResponse;
+use codex_app_server_protocol::ThreadReadResponse;
+use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
+use codex_app_server_protocol::TurnStartParams;
+use codex_app_server_protocol::TurnStartResponse;
+use codex_app_server_protocol::TurnStartedNotification;
+use codex_app_server_protocol::TurnSteerParams;
+use codex_app_server_protocol::TurnSteerResponse;
+use codex_app_server_protocol::UserInput;
 use codex_core::config::set_project_trust_level;
+use codex_login::default_client::CODEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR;
 use codex_protocol::config_types::TrustLevel;
+use core_test_support::responses;
 use futures::SinkExt;
 use futures::StreamExt;
 use hmac::Hmac;
@@ -99,6 +116,452 @@ async fn websocket_transport_routes_per_connection_handshake_and_responses() -> 
     assert_eq!(ws2_config.id, RequestId::Integer(77));
     assert!(ws1_config.result.get("config").is_some());
     assert!(ws2_config.result.get("config").is_some());
+
+    process
+        .kill()
+        .await
+        .context("failed to stop websocket app-server process")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn websocket_shared_server_preserves_connection_originators_per_thread_and_turn() -> Result<()>
+{
+    let server = create_mock_responses_server_sequence_unchecked(vec![
+        create_final_assistant_message_sse_response("desktop done")?,
+        create_final_assistant_message_sse_response("manager done")?,
+    ])
+    .await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri(), "never")?;
+
+    let (mut process, bind_addr) = spawn_websocket_server(codex_home.path()).await?;
+    let mut desktop = connect_websocket(bind_addr).await?;
+    let mut manager = connect_websocket(bind_addr).await?;
+
+    send_initialize_request(&mut desktop, /*id*/ 1, "Codex Desktop").await?;
+    read_response_for_id(&mut desktop, /*id*/ 1).await?;
+    send_initialize_request(&mut manager, /*id*/ 2, "belie_manager").await?;
+    read_response_for_id(&mut manager, /*id*/ 2).await?;
+
+    let desktop_thread =
+        start_thread_with_service_name(&mut desktop, /*id*/ 3, Some("codex_work_desktop")).await?;
+    let manager_thread = start_thread(&mut manager, /*id*/ 4).await?;
+
+    let desktop_origins = start_turn_and_read_origins(
+        &mut desktop,
+        /*id*/ 5,
+        &desktop_thread,
+        "desktop input",
+    )
+    .await?;
+    let manager_origins = start_turn_and_read_origins(
+        &mut manager,
+        /*id*/ 6,
+        &manager_thread,
+        "manager input",
+    )
+    .await?;
+
+    assert_eq!(
+        desktop_origins,
+        ("Codex Desktop".to_string(), "Codex Desktop".to_string())
+    );
+    assert_eq!(
+        manager_origins,
+        ("belie_manager".to_string(), "belie_manager".to_string())
+    );
+
+    let requests = server
+        .received_requests()
+        .await
+        .context("failed to fetch model requests")?;
+    let origins = requests
+        .iter()
+        .filter(|request| request.url.path().ends_with("/responses"))
+        .map(|request| {
+            request
+                .headers
+                .get("originator")
+                .context("model request should include originator")?
+                .to_str()
+                .context("originator should be valid UTF-8")
+                .map(str::to_string)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    assert_eq!(
+        origins,
+        vec![
+            "codex_work_desktop".to_string(),
+            "belie_manager".to_string()
+        ]
+    );
+
+    process
+        .kill()
+        .await
+        .context("failed to stop websocket app-server process")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn websocket_thread_originator_survives_restart_and_all_thread_reads() -> Result<()> {
+    let server = create_mock_responses_server_sequence_unchecked(vec![
+        create_final_assistant_message_sse_response("persisted")?,
+    ])
+    .await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri(), "never")?;
+
+    let (mut process, bind_addr) = spawn_websocket_server(codex_home.path()).await?;
+    let mut manager = connect_websocket(bind_addr).await?;
+    send_initialize_request(&mut manager, /*id*/ 1, "belie_manager").await?;
+    read_response_for_id(&mut manager, /*id*/ 1).await?;
+
+    send_request(
+        &mut manager,
+        "thread/start",
+        /*id*/ 2,
+        Some(serde_json::to_value(ThreadStartParams {
+            model: Some("mock-model".to_string()),
+            ..Default::default()
+        })?),
+    )
+    .await?;
+    let start_response = read_response_for_id(&mut manager, /*id*/ 2).await?;
+    let ThreadStartResponse { thread, .. } = to_response(start_response)?;
+    assert_eq!(thread.originator.as_deref(), Some("belie_manager"));
+
+    let origins = start_turn_and_read_origins(
+        &mut manager,
+        /*id*/ 3,
+        thread.id.as_str(),
+        "persist this thread",
+    )
+    .await?;
+    assert_eq!(
+        origins,
+        ("belie_manager".to_string(), "belie_manager".to_string())
+    );
+    process
+        .kill()
+        .await
+        .context("failed to stop first websocket app-server process")?;
+
+    let (mut restarted_process, restarted_bind_addr) =
+        spawn_websocket_server(codex_home.path()).await?;
+    let mut reconnected_manager = connect_websocket(restarted_bind_addr).await?;
+    send_initialize_request(&mut reconnected_manager, /*id*/ 4, "belie_manager").await?;
+    read_response_for_id(&mut reconnected_manager, /*id*/ 4).await?;
+
+    send_request(
+        &mut reconnected_manager,
+        "thread/resume",
+        /*id*/ 5,
+        Some(json!({"threadId": thread.id})),
+    )
+    .await?;
+    let resume_response = read_response_for_id(&mut reconnected_manager, /*id*/ 5).await?;
+    let ThreadResumeResponse {
+        thread: resumed_thread,
+        ..
+    } = to_response(resume_response)?;
+    assert_eq!(resumed_thread.originator.as_deref(), Some("belie_manager"));
+
+    send_request(
+        &mut reconnected_manager,
+        "thread/read",
+        /*id*/ 6,
+        Some(json!({"threadId": thread.id, "includeTurns": false})),
+    )
+    .await?;
+    let read_response = read_response_for_id(&mut reconnected_manager, /*id*/ 6).await?;
+    let ThreadReadResponse {
+        thread: read_thread,
+    } = to_response(read_response)?;
+    assert_eq!(read_thread.originator.as_deref(), Some("belie_manager"));
+
+    send_request(
+        &mut reconnected_manager,
+        "thread/list",
+        /*id*/ 7,
+        Some(json!({"limit": 100})),
+    )
+    .await?;
+    let list_response = read_response_for_id(&mut reconnected_manager, /*id*/ 7).await?;
+    let ThreadListResponse { data, .. } = to_response(list_response)?;
+    let listed_thread = data
+        .iter()
+        .find(|candidate| candidate.id == thread.id)
+        .context("thread/list should return the persisted thread")?;
+    assert_eq!(listed_thread.originator.as_deref(), Some("belie_manager"));
+
+    restarted_process
+        .kill()
+        .await
+        .context("failed to stop restarted websocket app-server process")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn websocket_shared_server_routes_dynamic_tools_only_to_the_registering_client() -> Result<()>
+{
+    let call_id = "manager-callback-1";
+    let tool_name = "report_progress";
+    let tool_arguments = json!({"message": "working"});
+    let server = create_mock_responses_server_sequence_unchecked(vec![
+        responses::sse(vec![
+            responses::ev_response_created("resp-1"),
+            responses::ev_function_call(
+                call_id,
+                tool_name,
+                &serde_json::to_string(&tool_arguments)?,
+            ),
+            responses::ev_completed("resp-1"),
+        ]),
+        create_final_assistant_message_sse_response("done")?,
+    ])
+    .await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri(), "never")?;
+
+    let (mut process, bind_addr) = spawn_websocket_server(codex_home.path()).await?;
+    let mut manager = connect_websocket(bind_addr).await?;
+    let mut desktop = connect_websocket(bind_addr).await?;
+    send_initialize_request_with_experimental_api(&mut manager, /*id*/ 1, "belie_manager").await?;
+    read_response_for_id(&mut manager, /*id*/ 1).await?;
+    send_initialize_request_with_experimental_api(&mut desktop, /*id*/ 2, "Codex Desktop").await?;
+    read_response_for_id(&mut desktop, /*id*/ 2).await?;
+
+    send_request(
+        &mut manager,
+        "thread/start",
+        /*id*/ 3,
+        Some(json!({
+            "model": "mock-model",
+            "dynamicTools": [{
+                "name": tool_name,
+                "description": "Report progress to the run owner",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"message": {"type": "string"}},
+                    "required": ["message"],
+                    "additionalProperties": false
+                }
+            }]
+        })),
+    )
+    .await?;
+    let thread_response = read_response_for_id(&mut manager, /*id*/ 3).await?;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(thread_response)?;
+
+    send_request(
+        &mut desktop,
+        "turn/start",
+        /*id*/ 5,
+        Some(serde_json::to_value(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "report progress".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })?),
+    )
+    .await?;
+    read_response_for_id(&mut desktop, /*id*/ 5).await?;
+
+    let dynamic_request = timeout(DEFAULT_READ_TIMEOUT, async {
+        loop {
+            let message = read_jsonrpc_message(&mut manager).await?;
+            if let JSONRPCMessage::Request(request) = message
+                && request.method == "item/tool/call"
+            {
+                return Ok::<_, anyhow::Error>(request);
+            }
+        }
+    })
+    .await??;
+    let dynamic_params = dynamic_request
+        .params
+        .as_ref()
+        .context("item/tool/call should include params")?;
+    assert_eq!(dynamic_params["threadId"], thread.id);
+    assert_eq!(dynamic_params["callId"], call_id);
+    assert_eq!(dynamic_params["tool"], tool_name);
+    assert_eq!(dynamic_params["arguments"], tool_arguments);
+
+    assert_no_request(&mut desktop, Duration::from_millis(250)).await?;
+
+    send_jsonrpc(
+        &mut manager,
+        JSONRPCMessage::Response(JSONRPCResponse {
+            id: dynamic_request.id,
+            result: serde_json::to_value(DynamicToolCallResponse {
+                content_items: vec![DynamicToolCallOutputContentItem::InputText {
+                    text: "progress accepted".to_string(),
+                }],
+                success: true,
+            })?,
+        }),
+    )
+    .await?;
+
+    timeout(DEFAULT_READ_TIMEOUT, async {
+        loop {
+            let message = read_jsonrpc_message(&mut manager).await?;
+            if let JSONRPCMessage::Notification(notification) = message
+                && notification.method == "turn/completed"
+                && notification
+                    .params
+                    .as_ref()
+                    .and_then(|params| params.get("threadId"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some(thread.id.as_str())
+            {
+                return Ok::<(), anyhow::Error>(());
+            }
+        }
+    })
+    .await??;
+
+    process
+        .kill()
+        .await
+        .context("failed to stop websocket app-server process")?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn websocket_shared_server_identifies_the_client_that_steers_a_turn() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let workdir = TempDir::new()?;
+    let server = create_mock_responses_server_sequence_unchecked(vec![
+        create_shell_command_sse_response(
+            vec!["sleep".to_string(), "2".to_string()],
+            Some(workdir.path()),
+            Some(10_000),
+            "call_sleep",
+        )?,
+        create_final_assistant_message_sse_response("done")?,
+    ])
+    .await;
+    create_config_toml(codex_home.path(), &server.uri(), "never")?;
+
+    let (mut process, bind_addr) = spawn_websocket_server(codex_home.path()).await?;
+    let mut desktop = connect_websocket(bind_addr).await?;
+    let mut manager = connect_websocket(bind_addr).await?;
+
+    send_initialize_request(&mut desktop, /*id*/ 1, "Codex Desktop").await?;
+    read_response_for_id(&mut desktop, /*id*/ 1).await?;
+    send_initialize_request(&mut manager, /*id*/ 2, "belie_manager").await?;
+    read_response_for_id(&mut manager, /*id*/ 2).await?;
+
+    let thread_id =
+        start_thread_with_service_name(&mut desktop, /*id*/ 3, Some("codex_work_desktop")).await?;
+    send_request(
+        &mut desktop,
+        "turn/start",
+        /*id*/ 4,
+        Some(serde_json::to_value(TurnStartParams {
+            thread_id: thread_id.clone(),
+            input: vec![UserInput::Text {
+                text: "run sleep".to_string(),
+                text_elements: Vec::new(),
+            }],
+            cwd: Some(workdir.path().to_path_buf()),
+            ..Default::default()
+        })?),
+    )
+    .await?;
+    let (turn_response, _) =
+        read_response_and_notification_for_method(&mut desktop, /*id*/ 4, "turn/started").await?;
+    let TurnStartResponse { turn } = to_response::<TurnStartResponse>(turn_response)?;
+
+    send_request(
+        &mut manager,
+        "turn/steer",
+        /*id*/ 5,
+        Some(serde_json::to_value(TurnSteerParams {
+            thread_id: thread_id.clone(),
+            client_user_message_id: Some("manager-steer".to_string()),
+            input: vec![UserInput::Text {
+                text: "manager input".to_string(),
+                text_elements: Vec::new(),
+            }],
+            responsesapi_client_metadata: None,
+            additional_context: None,
+            expected_turn_id: turn.id.clone(),
+        })?),
+    )
+    .await?;
+    let steer_response = read_response_for_id(&mut manager, /*id*/ 5).await?;
+    let steer = to_response::<TurnSteerResponse>(steer_response)?;
+    assert_eq!(steer.turn_id, turn.id);
+
+    let steered_input = timeout(DEFAULT_READ_TIMEOUT, async {
+        loop {
+            let message = read_jsonrpc_message(&mut desktop).await?;
+            let JSONRPCMessage::Notification(notification) = message else {
+                continue;
+            };
+            if notification.method != "item/started" {
+                continue;
+            }
+            let params: ItemStartedNotification = serde_json::from_value(
+                notification
+                    .params
+                    .context("item/started should include params")?,
+            )?;
+            let codex_app_server_protocol::ThreadItem::UserMessage { client_id, .. } = &params.item
+            else {
+                continue;
+            };
+            if client_id.as_deref() == Some("manager-steer") {
+                return Ok::<_, anyhow::Error>(params);
+            }
+        }
+    })
+    .await??;
+    assert_eq!(steered_input.client_name.as_deref(), Some("belie_manager"));
+
+    timeout(DEFAULT_READ_TIMEOUT, async {
+        loop {
+            let message = read_jsonrpc_message(&mut desktop).await?;
+            if let JSONRPCMessage::Notification(notification) = message
+                && notification.method == "turn/completed"
+                && notification
+                    .params
+                    .as_ref()
+                    .and_then(|params| params.get("threadId"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some(thread_id.as_str())
+            {
+                return Ok::<(), anyhow::Error>(());
+            }
+        }
+    })
+    .await??;
+
+    let requests = server
+        .received_requests()
+        .await
+        .context("failed to fetch model requests")?;
+    let origins = requests
+        .iter()
+        .filter(|request| request.url.path().ends_with("/responses"))
+        .map(|request| {
+            request
+                .headers
+                .get("originator")
+                .context("model request should include originator")?
+                .to_str()
+                .context("originator should be valid UTF-8")
+                .map(str::to_string)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    assert!(origins.iter().all(|origin| origin == "codex_work_desktop"));
 
     process
         .kill()
@@ -498,6 +961,7 @@ pub(super) async fn spawn_websocket_server_with_args(
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .env("CODEX_HOME", codex_home)
+        .env_remove(CODEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR)
         .env("RUST_LOG", "warn");
     let mut process = cmd
         .kill_on_drop(true)
@@ -712,13 +1176,47 @@ pub(super) async fn send_initialize_request(
     .await
 }
 
+async fn send_initialize_request_with_experimental_api(
+    stream: &mut WsClient,
+    id: i64,
+    client_name: &str,
+) -> Result<()> {
+    let params = InitializeParams {
+        client_info: ClientInfo {
+            name: client_name.to_string(),
+            title: Some("WebSocket Test Client".to_string()),
+            version: "0.1.0".to_string(),
+        },
+        capabilities: Some(InitializeCapabilities {
+            experimental_api: true,
+            ..Default::default()
+        }),
+    };
+    send_request(
+        stream,
+        "initialize",
+        id,
+        Some(serde_json::to_value(params)?),
+    )
+    .await
+}
+
 async fn start_thread(stream: &mut WsClient, id: i64) -> Result<String> {
+    start_thread_with_service_name(stream, id, None).await
+}
+
+async fn start_thread_with_service_name(
+    stream: &mut WsClient,
+    id: i64,
+    service_name: Option<&str>,
+) -> Result<String> {
     send_request(
         stream,
         "thread/start",
         id,
         Some(serde_json::to_value(ThreadStartParams {
             model: Some("mock-model".to_string()),
+            service_name: service_name.map(str::to_string),
             ..Default::default()
         })?),
     )
@@ -726,6 +1224,85 @@ async fn start_thread(stream: &mut WsClient, id: i64) -> Result<String> {
     let response = read_response_for_id(stream, id).await?;
     let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(response)?;
     Ok(thread.id)
+}
+
+async fn start_turn_and_read_origins(
+    stream: &mut WsClient,
+    id: i64,
+    thread_id: &str,
+    text: &str,
+) -> Result<(String, String)> {
+    send_request(
+        stream,
+        "turn/start",
+        id,
+        Some(serde_json::to_value(TurnStartParams {
+            thread_id: thread_id.to_string(),
+            input: vec![UserInput::Text {
+                text: text.to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })?),
+    )
+    .await?;
+
+    let request_id = RequestId::Integer(id);
+    let mut response_seen = false;
+    let mut turn_client_name = None;
+    let mut input_client_name = None;
+    let mut completed = false;
+    while !response_seen || turn_client_name.is_none() || input_client_name.is_none() || !completed
+    {
+        match read_jsonrpc_message(stream).await? {
+            JSONRPCMessage::Response(response) if response.id == request_id => {
+                let _: TurnStartResponse = to_response(response)?;
+                response_seen = true;
+            }
+            JSONRPCMessage::Notification(notification) if notification.method == "turn/started" => {
+                let params: TurnStartedNotification = serde_json::from_value(
+                    notification
+                        .params
+                        .context("turn/started should include params")?,
+                )?;
+                if params.thread_id == thread_id {
+                    turn_client_name = params.client_name;
+                }
+            }
+            JSONRPCMessage::Notification(notification) if notification.method == "item/started" => {
+                let params: ItemStartedNotification = serde_json::from_value(
+                    notification
+                        .params
+                        .context("item/started should include params")?,
+                )?;
+                if params.thread_id == thread_id
+                    && matches!(
+                        params.item,
+                        codex_app_server_protocol::ThreadItem::UserMessage { .. }
+                    )
+                {
+                    input_client_name = params.client_name;
+                }
+            }
+            JSONRPCMessage::Notification(notification)
+                if notification.method == "turn/completed"
+                    && notification
+                        .params
+                        .as_ref()
+                        .and_then(|params| params.get("threadId"))
+                        .and_then(serde_json::Value::as_str)
+                        == Some(thread_id) =>
+            {
+                completed = true;
+            }
+            _ => {}
+        }
+    }
+
+    Ok((
+        turn_client_name.context("turn/started should identify its connection client")?,
+        input_client_name.context("user input should identify its connection client")?,
+    ))
 }
 
 async fn assert_loaded_threads(stream: &mut WsClient, id: i64, expected: &[&str]) -> Result<()> {
@@ -824,10 +1401,14 @@ pub(super) async fn read_response_for_id(
     let target_id = RequestId::Integer(id);
     loop {
         let message = read_jsonrpc_message(stream).await?;
-        if let JSONRPCMessage::Response(response) = message
-            && response.id == target_id
-        {
-            return Ok(response);
+        match message {
+            JSONRPCMessage::Response(response) if response.id == target_id => {
+                return Ok(response);
+            }
+            JSONRPCMessage::Error(error) if error.id == target_id => {
+                bail!("request {id} failed: {}", error.error.message);
+            }
+            _ => {}
         }
     }
 }
@@ -925,6 +1506,22 @@ pub(super) async fn assert_no_message(stream: &mut WsClient, wait_for: Duration)
         Ok(Some(Ok(frame))) => bail!("unexpected frame while waiting for silence: {frame:?}"),
         Ok(Some(Err(err))) => bail!("unexpected websocket read error: {err}"),
         Ok(None) => bail!("websocket closed unexpectedly while waiting for silence"),
+        Err(_) => Ok(()),
+    }
+}
+
+async fn assert_no_request(stream: &mut WsClient, wait_for: Duration) -> Result<()> {
+    match timeout(wait_for, async {
+        loop {
+            if let JSONRPCMessage::Request(request) = read_jsonrpc_message(stream).await? {
+                return Ok::<_, anyhow::Error>(request);
+            }
+        }
+    })
+    .await
+    {
+        Ok(Ok(request)) => bail!("unexpected server request: {request:?}"),
+        Ok(Err(err)) => Err(err),
         Err(_) => Ok(()),
     }
 }

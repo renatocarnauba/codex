@@ -144,6 +144,14 @@ impl ThreadScopedOutgoingMessageSender {
             .await
     }
 
+    pub(crate) fn with_connection_ids(&self, connection_ids: Vec<ConnectionId>) -> Self {
+        Self {
+            outgoing: self.outgoing.clone(),
+            connection_ids: Arc::new(connection_ids),
+            thread_id: self.thread_id,
+        }
+    }
+
     pub(crate) fn track_effective_permissions_approval_response(
         &self,
         request_id: RequestId,
@@ -354,8 +362,15 @@ impl OutgoingMessageSender {
         &self,
         connection_id: ConnectionId,
         thread_id: ThreadId,
+        replay_dynamic_tools: bool,
     ) {
-        let requests = self.pending_requests_for_thread(thread_id).await;
+        let requests = self
+            .pending_requests_for_thread(thread_id)
+            .await
+            .into_iter()
+            .filter(|request| {
+                replay_dynamic_tools || !matches!(request, ServerRequest::DynamicToolCall { .. })
+            });
         for request in requests {
             if let Err(err) = self
                 .sender

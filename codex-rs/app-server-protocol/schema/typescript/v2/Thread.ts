@@ -54,6 +54,10 @@ cliVersion: string, /**
  * Origin of the thread (CLI, VSCode, codex exec, codex app-server, etc.).
  */
 source: SessionSource, /**
+ * Effective client originator persisted when this thread was created.
+ * Legacy threads whose metadata predates this field may report `null`.
+ */
+originator: string | null, /**
  * Optional analytics source classification for this thread.
  */
 threadSource: ThreadSource | null, /**

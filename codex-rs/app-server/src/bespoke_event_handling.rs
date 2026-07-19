@@ -7,6 +7,7 @@ use crate::request_processors::thread_from_stored_thread;
 use crate::request_processors::thread_settings_from_core_snapshot;
 use crate::server_request_error::is_turn_transition_server_request_error;
 use crate::thread_state::ThreadState;
+use crate::thread_state::ThreadStateManager;
 use crate::thread_state::TurnSummary;
 use crate::thread_state::resolve_server_request_on_thread_listener;
 use crate::thread_status::ThreadWatchActiveGuard;
@@ -140,6 +141,7 @@ pub(crate) async fn apply_bespoke_event_handling(
     conversation_id: ThreadId,
     conversation: Arc<CodexThread>,
     thread_manager: Arc<ThreadManager>,
+    thread_state_manager: ThreadStateManager,
     outgoing: ThreadScopedOutgoingMessageSender,
     thread_state: Arc<tokio::sync::Mutex<ThreadState>>,
     thread_watch_manager: ThreadWatchManager,
@@ -176,6 +178,7 @@ pub(crate) async fn apply_bespoke_event_handling(
             let notification = TurnStartedNotification {
                 thread_id: conversation_id.to_string(),
                 turn,
+                client_name: conversation.config_snapshot().await.app_server_client_name,
             };
             outgoing
                 .send_server_notification(ServerNotification::TurnStarted(notification))
@@ -982,16 +985,27 @@ pub(crate) async fn apply_bespoke_event_handling(
                 _ => None,
             };
             if should_emit {
-                let notification = item_event_to_server_notification(
+                let mut notification = item_event_to_server_notification(
                     EventMsg::ItemStarted(event),
                     &conversation_id.to_string(),
                     &event_turn_id,
                 );
+                if let ServerNotification::ItemStarted(params) = &mut notification {
+                    params.client_name =
+                        conversation.config_snapshot().await.app_server_client_name;
+                }
                 outgoing.send_server_notification(notification).await;
             }
             if let Some(params) = dynamic_tool_call_params {
                 let call_id = params.call_id.clone();
-                let (_pending_request_id, rx) = outgoing
+                let callback_outgoing = match thread_state_manager
+                    .dynamic_tool_connection_ids(conversation_id)
+                    .await
+                {
+                    Some(connection_ids) => outgoing.with_connection_ids(connection_ids),
+                    None => outgoing.clone(),
+                };
+                let (_pending_request_id, rx) = callback_outgoing
                     .send_request(ServerRequestPayload::DynamicToolCall(params))
                     .await;
                 tokio::spawn(async move {
@@ -1347,6 +1361,7 @@ async fn start_command_execution_item(
         let notification = ItemStartedNotification {
             thread_id: conversation_id.to_string(),
             turn_id,
+            client_name: None,
             started_at_ms: now_unix_timestamp_ms(),
             item: ThreadItem::CommandExecution {
                 id: item_id,
@@ -2195,6 +2210,7 @@ mod tests {
             cwd: test_path_buf("/tmp").abs().into(),
             cli_version: "0.0.0".to_string(),
             source: SessionSource::Cli,
+            originator: Some("codex_cli_rs".to_string()),
             history_mode: Default::default(),
             thread_source: None,
             agent_nickname: None,
@@ -2331,6 +2347,7 @@ mod tests {
                 self.conversation_id,
                 self.conversation.clone(),
                 self.thread_manager.clone(),
+                ThreadStateManager::new(),
                 self.outgoing.clone(),
                 self.thread_state.clone(),
                 self.thread_watch_manager.clone(),
@@ -3280,6 +3297,7 @@ mod tests {
             conversation_id,
             conversation,
             thread_manager,
+            ThreadStateManager::new(),
             outgoing,
             thread_state,
             thread_watch_manager,
@@ -3354,6 +3372,7 @@ mod tests {
             conversation_id,
             conversation,
             thread_manager,
+            ThreadStateManager::new(),
             outgoing,
             new_thread_state(),
             thread_watch_manager.clone(),
@@ -3441,6 +3460,7 @@ mod tests {
             conversation_id,
             conversation,
             thread_manager,
+            ThreadStateManager::new(),
             outgoing,
             new_thread_state(),
             ThreadWatchManager::new(),

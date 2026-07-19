@@ -907,6 +907,7 @@ mod tests {
             agent_nickname: None,
             agent_role: None,
             source,
+            originator: Some("test-client".to_string()),
             can_accept_direct_input: None,
             thread_source: None,
             git_info: None,

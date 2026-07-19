@@ -115,61 +115,78 @@ fn developer_interrupted_marker() -> ResponseItem {
 }
 
 #[test]
-fn effective_originator_prefers_thread_scoped_sources_before_env_originator() {
-    for (metrics_service_name, persisted_originator, inherited_originator, expected_originator) in [
+fn effective_originator_prefers_thread_scoped_sources_then_explicit_overrides() {
+    for (
+        metrics_service_name,
+        persisted_originator,
+        inherited_originator,
+        env_originator,
+        expected_originator,
+    ) in [
         (
             Some("codex_work_desktop"),
             Some("persisted_originator"),
             Some("inherited_originator"),
+            Some("Codex Desktop"),
             "codex_work_desktop",
         ),
         (
             Some("codex_work_web"),
             Some("persisted_originator"),
             Some("inherited_originator"),
+            Some("Codex Desktop"),
             "codex_work_web",
         ),
         (
             Some("codex_work_mobile"),
             Some("persisted_originator"),
             Some("inherited_originator"),
+            Some("Codex Desktop"),
             "codex_work_mobile",
         ),
         (
             Some("codex_work_cca"),
             Some("persisted_originator"),
             Some("inherited_originator"),
+            Some("Codex Desktop"),
             "codex_work_cca",
         ),
         (
             Some("chatgpt_cca"),
             Some("persisted_originator"),
             Some("inherited_originator"),
+            Some("Codex Desktop"),
             "chatgpt_cca",
         ),
         (
             Some("chatgpt_cca_extra"),
             Some("persisted_originator"),
             Some("inherited_originator"),
+            Some("Codex Desktop"),
             "persisted_originator",
         ),
         (
             None,
             Some("persisted_originator"),
             Some("inherited_originator"),
+            Some("Codex Desktop"),
             "persisted_originator",
         ),
         (
             None,
             None,
             Some("inherited_originator"),
+            Some("Codex Desktop"),
             "inherited_originator",
         ),
+        (None, None, None, Some("Codex Desktop"), "Codex Desktop"),
+        (None, None, None, None, "connection_client"),
     ] {
         assert_eq!(
             effective_originator_value(
                 metrics_service_name,
-                Some("Codex Desktop".to_string()),
+                Some("connection_client".to_string()),
+                env_originator.map(str::to_string),
                 persisted_originator.map(str::to_string),
                 inherited_originator.map(str::to_string),
                 "codex_cli_rs".to_string(),
@@ -501,6 +518,7 @@ async fn start_thread_keeps_internal_threads_hidden_from_normal_lookups() {
             thread_source: None,
             dynamic_tools: Vec::new(),
             metrics_service_name: None,
+            connection_originator: None,
             parent_trace: None,
             environments: Vec::new(),
             thread_extension_init: Default::default(),
@@ -652,6 +670,7 @@ async fn start_thread_seeds_extension_data_for_mcp_and_lifecycle_contributors() 
             thread_source: None,
             dynamic_tools: Vec::new(),
             metrics_service_name: Some("codex_work_desktop".to_string()),
+            connection_originator: None,
             parent_trace: None,
             environments: Vec::new(),
             thread_extension_init: selected_root_init("selected-a", "env-a"),
@@ -669,6 +688,7 @@ async fn start_thread_seeds_extension_data_for_mcp_and_lifecycle_contributors() 
             thread_source: None,
             dynamic_tools: Vec::new(),
             metrics_service_name: None,
+            connection_originator: None,
             parent_trace: None,
             environments: Vec::new(),
             thread_extension_init: selected_root_init("selected-b", "env-b"),
@@ -799,6 +819,7 @@ async fn selected_capability_roots_round_trip_through_fork() {
             thread_source: None,
             dynamic_tools: Vec::new(),
             metrics_service_name: None,
+            connection_originator: None,
             parent_trace: None,
             environments: Vec::new(),
             thread_extension_init: Default::default(),
@@ -874,6 +895,7 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
             thread_source: None,
             dynamic_tools: Vec::new(),
             metrics_service_name: None,
+            connection_originator: None,
             parent_trace: None,
             environments: environments.clone(),
             thread_extension_init: Default::default(),
@@ -1181,6 +1203,7 @@ async fn resume_stopped_thread_from_rollout_preserves_thread_source() {
             thread_source: Some(ThreadSource::User),
             dynamic_tools: Vec::new(),
             metrics_service_name: None,
+            connection_originator: None,
             parent_trace: None,
             environments: Vec::new(),
             thread_extension_init: Default::default(),
