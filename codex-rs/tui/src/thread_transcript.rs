@@ -62,6 +62,7 @@ pub(crate) fn thread_to_transcript_cells(
             ThreadItem::UserMessage {
                 id,
                 client_id,
+                client_name,
                 content,
             } => {
                 if content.iter().any(|input| {
@@ -78,7 +79,7 @@ pub(crate) fn thread_to_transcript_cells(
                 let item = UserMessageItem {
                     id: id.clone(),
                     client_id: client_id.clone(),
-                    client_name: None,
+                    client_name: client_name.clone(),
                     content: content
                         .iter()
                         .cloned()
